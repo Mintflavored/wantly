@@ -41,14 +41,17 @@ class SyncManager(
             database.wishlistDao().clearAll()
             database.wishDao().clearAll()
 
-            for (detail in details) {
+            // Сохраняем порядок сервера: первый список получает наибольший
+            // timestamp (observeAllWithCount сортирует DESC).
+            val baseTime = System.currentTimeMillis()
+            details.forEachIndexed { index, detail ->
                 database.wishlistDao().insertWithId(
                     WishlistEntity(
                         id = detail.wishlist.id,
                         title = detail.wishlist.title,
                         description = detail.wishlist.description,
                         coverColor = detail.wishlist.coverColor,
-                        createdAt = System.currentTimeMillis(),
+                        createdAt = baseTime - index,
                     ),
                 )
                 for (wish in detail.wishes) {
