@@ -49,9 +49,11 @@ class AuthViewModel(
                 // Если миграция упала — НЕ синхронизируем, чтобы не потерять данные.
                 val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
                 if (migrated) {
+                    syncManager.skipAutoSync = false
                     runCatching { syncManager.fullSync() }
+                } else {
+                    syncManager.skipAutoSync = false
                 }
-                syncManager.skipAutoSync = false
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
