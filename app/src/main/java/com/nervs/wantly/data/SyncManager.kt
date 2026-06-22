@@ -19,23 +19,29 @@ class SyncManager(
     private val database: WantlyDatabase,
     private val api: WantlyApi,
 ) {
+    /** Когда true — LaunchedEffect-синхронизацию пропускаем (идёт миграция/вход). */
+    @Volatile
+    var skipAutoSync = false
+
     /**
      * Полная синхронизация: получить все списки с сервера → заменить Room.
      * Вызывается при запуске (если залогинен) и после login/register.
      */
     suspend fun fullSync() {
+        if (skipAutoSync) return
         try {
             Log.d(TAG, "Начинаю fullSync...")
             val remoteLists = api.getWishlists()
 
-            // Wipe + re-insert — сервер = source of truth
+            // Сначала загружаем все данные с сервера в память,
+            // и только если всё прошло успешно — заменяем Room.
+            val details = remoteLists.map { api.getWishlistDetail(it.id) }
+
+            // Wipe + re-insert — атомарная замена только после успешного pull
             database.wishlistDao().clearAll()
             database.wishDao().clearAll()
 
-            for (list in remoteLists) {
-                val detail = api.getWishlistDetail(list.id)
-
-                // Вставляем список с серверным ID
+            for (detail in details) {
                 database.wishlistDao().insertWithId(
                     WishlistEntity(
                         id = detail.wishlist.id,
@@ -45,8 +51,6 @@ class SyncManager(
                         createdAt = System.currentTimeMillis(),
                     ),
                 )
-
-                // Вставляем желания с серверными ID
                 for (wish in detail.wishes) {
                     database.wishDao().insertWithId(
                         WishEntity(

@@ -42,12 +42,16 @@ class AuthViewModel(
                     saveSession(r.token, r.userId, r.email, r.displayName)
                     r
                 }
+                // Блокируем авто-синхронизацию от LaunchedEffect — миграция
+                // и последующий fullSync идут последовательно из этого корутина.
+                syncManager.skipAutoSync = true
                 // Мигрируем локальные данные гостя на сервер.
                 // Если миграция упала — НЕ синхронизируем, чтобы не потерять данные.
                 val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
                 if (migrated) {
                     runCatching { syncManager.fullSync() }
                 }
+                syncManager.skipAutoSync = false
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }

@@ -47,11 +47,13 @@ class WishlistRepository(
             wishlistDao.insert(WishlistEntity(title = title, description = description, coverColor = coverColor))
         }
 
-    suspend fun deleteWishlist(wishlist: WishlistEntity, isLoggedIn: Boolean) {
+    suspend fun deleteWishlist(wishlist: WishlistEntity, isLoggedIn: Boolean): Boolean {
         if (isLoggedIn) {
-            runCatching { api.deleteWishlist(wishlist.id) }
+            val ok = runCatching { api.deleteWishlist(wishlist.id) }.isSuccess
+            if (!ok) return false // сервер недоступен — не удаляем локально
         }
         wishlistDao.delete(wishlist)
+        return true
     }
 
     /**
@@ -105,18 +107,22 @@ class WishlistRepository(
             )
         }
 
-    suspend fun updateWishStatus(wish: WishEntity, status: WishStatus, isLoggedIn: Boolean) {
+    suspend fun updateWishStatus(wish: WishEntity, status: WishStatus, isLoggedIn: Boolean): Boolean {
         if (isLoggedIn) {
-            runCatching { api.updateWishStatus(wish.id, status.name) }
+            val ok = runCatching { api.updateWishStatus(wish.id, status.name) }.isSuccess
+            if (!ok) return false
         }
         wishDao.updateStatus(wish.id, status.name)
+        return true
     }
 
-    suspend fun deleteWish(wish: WishEntity, isLoggedIn: Boolean) {
+    suspend fun deleteWish(wish: WishEntity, isLoggedIn: Boolean): Boolean {
         if (isLoggedIn) {
-            runCatching { api.deleteWish(wish.id) }
+            val ok = runCatching { api.deleteWish(wish.id) }.isSuccess
+            if (!ok) return false
         }
         wishDao.delete(wish)
+        return true
     }
 
     suspend fun previewLink(url: String, isLoggedIn: Boolean): LinkPreview =
