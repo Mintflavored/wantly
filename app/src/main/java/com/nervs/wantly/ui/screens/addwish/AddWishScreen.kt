@@ -53,7 +53,9 @@ fun AddWishScreen(
     wishlistId: Long,
     onBack: () -> Unit,
 ) {
-    val vm: AddWishViewModel = rememberAppViewModel { AddWishViewModel(wishlistId, it.repository, it.guestCounter) }
+    val vm: AddWishViewModel = rememberAppViewModel {
+        AddWishViewModel(wishlistId, it.repository, it.guestCounter, it.sessionManager)
+    }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)

@@ -126,9 +126,10 @@ class WantlyApi(private val tokenProvider: () -> String?) {
         runCatching { json.decodeFromString<ErrorResponse>(body).error }.getOrDefault("Ошибка сервера")
 
     companion object {
-        // Продакшен: https://wantlyapp.ru
-        // Эмулятор для локальной разработки: http://10.0.2.2:8080
-        const val BASE_URL = "https://wantlyapp.ru"
+        // Продакшен: https://wantlyapp.ru/
+        // Эмулятор для локальной разработки: http://10.0.2.2:8080/
+        // Trailing slash обязателен: пути ("api/preview") конкатенируются с BASE_URL.
+        const val BASE_URL = "https://wantlyapp.ru/"
     }
 }
 
