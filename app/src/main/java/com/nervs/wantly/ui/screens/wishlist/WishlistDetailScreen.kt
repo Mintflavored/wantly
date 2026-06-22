@@ -50,7 +50,7 @@ fun WishlistDetailScreen(
 ) {
     val context = LocalContext.current
     val vm: WishlistDetailViewModel =
-        rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository) }
+        rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository, it.sessionManager) }
     val wishlist by vm.wishlist.collectAsStateWithLifecycle()
     val wishes by vm.wishes.collectAsStateWithLifecycle()
     val cdBack = stringResource(R.string.cd_back)

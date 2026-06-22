@@ -22,6 +22,7 @@ data class AuthUiState(
 class AuthViewModel(
     private val sessionManager: SessionManager,
     private val repository: WishlistRepository,
+    private val syncManager: com.nervs.wantly.data.SyncManager,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState = _uiState.asStateFlow()
@@ -43,6 +44,8 @@ class AuthViewModel(
                 }
                 // Мигрируем локальные данные гостя на сервер
                 runCatching { repository.migrateLocalToServer() }
+                // Тянем полные данные с сервера (с серверными ID)
+                runCatching { syncManager.fullSync() }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
@@ -63,6 +66,7 @@ class AuthViewModel(
                     saveSession(r.token, r.userId, r.email, r.displayName)
                     r
                 }
+                runCatching { syncManager.fullSync() }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка входа") }

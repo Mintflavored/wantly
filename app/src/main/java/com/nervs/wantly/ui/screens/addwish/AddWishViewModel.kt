@@ -72,6 +72,7 @@ class AddWishViewModel(
         val st = _uiState.value
         if (!st.canSave) return
         viewModelScope.launch {
+            val loggedIn = sessionManager?.isLoggedIn?.first() ?: false
             repository.addWish(
                 wishlistId,
                 WishDraft(
@@ -83,6 +84,7 @@ class AddWishViewModel(
                     currency = st.currency.ifBlank { "RUB" },
                     storeName = st.storeName.ifBlank { null },
                 ),
+                isLoggedIn = loggedIn,
             )
             guestCounter?.incrementWish()
             onDone()

@@ -50,6 +50,9 @@ class WantlyApi(private val tokenProvider: () -> String?) {
         request("api/wishlists/$id", method = "DELETE")
     }
 
+    suspend fun getWishlistDetail(id: Long): WishlistDetailResponse =
+        get("api/wishlists/$id")
+
     // ── Wishes ────────────────────────────────────────────
 
     suspend fun createWish(wishlistId: Long, req: CreateWishRequest): WishDto =

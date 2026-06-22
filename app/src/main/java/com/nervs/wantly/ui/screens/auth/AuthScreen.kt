@@ -44,7 +44,9 @@ fun AuthScreen(
     onBack: () -> Unit,
     onSuccess: () -> Unit,
 ) {
-    val vm: AuthViewModel = rememberAppViewModel { AuthViewModel(it.sessionManager, it.repository) }
+    val vm: AuthViewModel = rememberAppViewModel {
+        AuthViewModel(it.sessionManager, it.repository, it.syncManager)
+    }
     val state by vm.uiState.collectAsStateWithLifecycle()
     var registerMode by remember { mutableStateOf(isRegisterMode) }
 

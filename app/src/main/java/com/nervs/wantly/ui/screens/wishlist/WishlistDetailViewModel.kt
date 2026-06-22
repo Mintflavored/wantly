@@ -2,18 +2,21 @@ package com.nervs.wantly.ui.screens.wishlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.model.WishStatus
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class WishlistDetailViewModel(
     private val wishlistId: Long,
     private val repository: WishlistRepository,
+    private val sessionManager: SessionManager,
 ) : ViewModel() {
     val wishlist: StateFlow<WishlistEntity?> =
         repository.observeWishlist(wishlistId)
@@ -23,13 +26,19 @@ class WishlistDetailViewModel(
         repository.observeWishes(wishlistId)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private suspend fun isLoggedIn(): Boolean = sessionManager.isLoggedIn.first()
+
     fun cycleStatus(wish: WishEntity) {
         viewModelScope.launch {
-            repository.updateWishStatus(wish, WishStatus.next(WishStatus.fromName(wish.status)))
+            repository.updateWishStatus(
+                wish,
+                WishStatus.next(WishStatus.fromName(wish.status)),
+                isLoggedIn(),
+            )
         }
     }
 
     fun deleteWish(wish: WishEntity) {
-        viewModelScope.launch { repository.deleteWish(wish) }
+        viewModelScope.launch { repository.deleteWish(wish, isLoggedIn()) }
     }
 }

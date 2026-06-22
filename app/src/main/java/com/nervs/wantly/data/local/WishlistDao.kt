@@ -3,6 +3,7 @@ package com.nervs.wantly.data.local
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.nervs.wantly.data.local.entity.WishlistEntity
@@ -30,4 +31,10 @@ interface WishlistDao {
 
     @Delete
     suspend fun delete(wishlist: WishlistEntity)
+
+    @Query("DELETE FROM wishlists")
+    suspend fun clearAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWithId(wishlist: WishlistEntity)
 }

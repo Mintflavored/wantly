@@ -67,6 +67,7 @@ dependencies {
     // Сетевой слой (Phase 3: серверный API)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.datetime)
     implementation(libs.androidx.datastore.preferences)
 
     testImplementation(libs.junit)

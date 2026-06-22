@@ -3,6 +3,7 @@ package com.nervs.wantly.data.local
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.nervs.wantly.data.local.entity.WishEntity
@@ -27,4 +28,10 @@ interface WishDao {
 
     @Query("UPDATE wishes SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
+
+    @Query("DELETE FROM wishes")
+    suspend fun clearAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWithId(wish: WishEntity)
 }
