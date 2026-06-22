@@ -42,10 +42,12 @@ class AuthViewModel(
                     saveSession(r.token, r.userId, r.email, r.displayName)
                     r
                 }
-                // Мигрируем локальные данные гостя на сервер
-                runCatching { repository.migrateLocalToServer() }
-                // Тянем полные данные с сервера (с серверными ID)
-                runCatching { syncManager.fullSync() }
+                // Мигрируем локальные данные гостя на сервер.
+                // Если миграция упала — НЕ синхронизируем, чтобы не потерять данные.
+                val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
+                if (migrated) {
+                    runCatching { syncManager.fullSync() }
+                }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }

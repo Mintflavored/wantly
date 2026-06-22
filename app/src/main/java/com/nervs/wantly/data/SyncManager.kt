@@ -29,6 +29,7 @@ class SyncManager(
             val remoteLists = api.getWishlists()
 
             // Wipe + re-insert — сервер = source of truth
+            database.wishlistDao().clearAll()
             database.wishDao().clearAll()
 
             for (list in remoteLists) {
@@ -67,6 +68,20 @@ class SyncManager(
         } catch (e: Exception) {
             Log.e(TAG, "fullSync не удался", e)
             // Не падаем — работаем offline с последними данными из Room
+        }
+    }
+
+    /**
+     * Очистка локальных данных (при выходе из аккаунта).
+     * Гость не должен видеть данные предыдущего залогиненного пользователя.
+     */
+    suspend fun clearLocal() {
+        try {
+            database.wishDao().clearAll()
+            database.wishlistDao().clearAll()
+            Log.d(TAG, "Локальные данные очищены")
+        } catch (e: Exception) {
+            Log.e(TAG, "Не удалось очистить локальные данные", e)
         }
     }
 

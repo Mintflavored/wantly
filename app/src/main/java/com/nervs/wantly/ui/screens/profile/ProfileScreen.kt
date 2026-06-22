@@ -74,7 +74,10 @@ fun ProfileScreen(
                 Spacer(Modifier.size(24.dp))
                 OutlinedButton(
                     onClick = {
-                        scope.launch { app.container.sessionManager.clearSession() }
+                        scope.launch {
+                            app.container.syncManager.clearLocal()
+                            app.container.sessionManager.clearSession()
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
