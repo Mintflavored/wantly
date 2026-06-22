@@ -47,19 +47,21 @@ class AuthViewModel(
                     r
                 }
                 // Мигрируем локальные данные гостя на сервер.
-                // Если миграция упала — НЕ синхронизируем, чтобы не потерять данные.
                 val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
                 if (migrated) {
-                    syncManager.skipAutoSync = false
-                    runCatching { syncManager.fullSync() }
-                } else {
-                    syncManager.skipAutoSync = false
+                    // fullSync — критичен: заменяет локальные гостевые ID
+                    // на серверные. Не глушим ошибку — если упало, пользователь
+                    // увидит сообщение и сможет повторить вход.
+                    syncManager.fullSync()
                 }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
             } catch (e: Exception) {
-                update { copy(isLoading = false, error = "Проверьте интернет-соединение" ) }
+                update { copy(isLoading = false, error = "Проверьте интернет-соединение") }
+            } finally {
+                // Гарантированный сброс флага — даже при ошибке регистрации
+                syncManager.skipAutoSync = false
             }
         }
     }

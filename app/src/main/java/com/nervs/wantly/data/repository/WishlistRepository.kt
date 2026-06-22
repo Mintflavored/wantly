@@ -30,9 +30,10 @@ class WishlistRepository(
      * - Залогинен: server-first (создаём на сервере → Room с server ID).
      * - Гость: только Room (локальный ID).
      */
-    suspend fun createWishlist(title: String, description: String?, coverColor: Int, isLoggedIn: Boolean): Long =
+    suspend fun createWishlist(title: String, description: String?, coverColor: Int, isLoggedIn: Boolean): Long? =
         if (isLoggedIn) {
-            val remote = api.createWishlist(CreateWishlistRequest(title, description, coverColor))
+            val remote = runCatching { api.createWishlist(CreateWishlistRequest(title, description, coverColor)) }
+                .getOrNull() ?: return null
             wishlistDao.insertWithId(
                 WishlistEntity(
                     id = remote.id,
@@ -61,21 +62,23 @@ class WishlistRepository(
      * - Залогинен: server-first.
      * - Гость: только Room.
      */
-    suspend fun addWish(wishlistId: Long, draft: WishDraft, isLoggedIn: Boolean): Long =
+    suspend fun addWish(wishlistId: Long, draft: WishDraft, isLoggedIn: Boolean): Long? =
         if (isLoggedIn) {
-            val remote = api.createWish(
-                wishlistId,
-                CreateWishRequest(
-                    title = draft.title,
-                    description = draft.description,
-                    url = draft.url,
-                    imageUrl = draft.imageUrl,
-                    price = draft.price,
-                    currency = draft.currency,
-                    storeName = draft.storeName,
-                    status = draft.status.name,
-                ),
-            )
+            val remote = runCatching {
+                api.createWish(
+                    wishlistId,
+                    CreateWishRequest(
+                        title = draft.title,
+                        description = draft.description,
+                        url = draft.url,
+                        imageUrl = draft.imageUrl,
+                        price = draft.price,
+                        currency = draft.currency,
+                        storeName = draft.storeName,
+                        status = draft.status.name,
+                    ),
+                )
+            }.getOrNull() ?: return null
             wishDao.insertWithId(
                 WishEntity(
                     id = remote.id,
