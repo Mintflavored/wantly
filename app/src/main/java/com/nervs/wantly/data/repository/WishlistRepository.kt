@@ -51,8 +51,35 @@ class WishlistRepository(
 
     suspend fun deleteWish(wish: WishEntity) = wishDao.delete(wish)
 
-    /** Парсинг ссылки: клиентский Jsoup (быстро, оффлайн) — серверный Playwright придёт в Фазе 3. */
-    suspend fun previewLink(url: String): LinkPreview = linkPreviewService.fetch(url)
+    /**
+     * Парсинг ссылки.
+     *
+     * - Гость (нет токена): клиентский Jsoup (OpenGraph/microdata/JSON-LD) — быстро, оффлайн.
+     * - Залогиненный: серверный Playwright через API — рендерит JS, надёжнее для SPA.
+     */
+    suspend fun previewLink(url: String, isLoggedIn: Boolean): LinkPreview =
+        if (isLoggedIn) {
+            runCatching {
+                val resp = api.preview(url)
+                if (resp.success) {
+                    LinkPreview(
+                        url = resp.url,
+                        title = resp.title,
+                        description = resp.description,
+                        imageUrl = resp.imageUrl,
+                        price = resp.price,
+                        currency = resp.currency,
+                        storeName = resp.storeName,
+                        success = true,
+                    )
+                } else {
+                    // Сервер не справился — fallback на клиентский Jsoup
+                    linkPreviewService.fetch(url)
+                }
+            }.getOrElse { linkPreviewService.fetch(url) }
+        } else {
+            linkPreviewService.fetch(url)
+        }
 
     // ── Серверная синхронизация (Фаза 3) ──────────────────
 

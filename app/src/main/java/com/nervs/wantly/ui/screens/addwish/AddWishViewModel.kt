@@ -7,6 +7,7 @@ import com.nervs.wantly.data.remote.LinkPreviewError
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -28,6 +29,7 @@ class AddWishViewModel(
     private val wishlistId: Long,
     private val repository: WishlistRepository,
     private val guestCounter: com.nervs.wantly.data.GuestCounter? = null,
+    private val sessionManager: com.nervs.wantly.data.SessionManager? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AddWishUiState())
     val uiState = _uiState.asStateFlow()
@@ -48,7 +50,8 @@ class AddWishViewModel(
         if (url.isBlank()) return
         update { copy(isParsing = true, error = null) }
         viewModelScope.launch {
-            val preview = repository.previewLink(url)
+            val loggedIn = sessionManager?.isLoggedIn?.first() ?: false
+            val preview = repository.previewLink(url, isLoggedIn = loggedIn)
             _uiState.update { st ->
                 st.copy(
                     isParsing = false,
