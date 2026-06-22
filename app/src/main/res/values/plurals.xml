@@ -1,0 +1,9 @@
+<resources>
+    <!-- Склонение слова «желание» по числу. -->
+    <plurals name="wishes_count">
+        <item quantity="one">%d желание</item>
+        <item quantity="few">%d желания</item>
+        <item quantity="many">%d желаний</item>
+        <item quantity="other">%d желаний</item>
+    </plurals>
+</resources>

@@ -1,0 +1,91 @@
+<resources>
+    <string name="app_name">Wantly</string>
+
+    <!-- Статусы желаний -->
+    <string name="status_wanted">Хочу</string>
+    <string name="status_reserved">Забронировано</string>
+    <string name="status_purchased">Куплено</string>
+
+    <!-- Content descriptions (для доступности) -->
+    <string name="cd_back">Назад</string>
+    <string name="cd_delete">Удалить</string>
+    <string name="cd_paste">Вставить</string>
+    <string name="cd_add_wish">Добавить желание</string>
+
+    <!-- Главный экран -->
+    <string name="home_subtitle">ваши списки желаний</string>
+    <string name="action_new_list">Новый список</string>
+    <string name="home_empty_title">Пока нет ни одного списка</string>
+    <string name="home_empty_subtitle">Нажмите «Новый список», чтобы добавить желания,\nкоторые вы хотите получить в подарок</string>
+
+    <!-- Создание списка -->
+    <string name="dialog_new_list_title">Новый список</string>
+    <string name="field_title">Название</string>
+    <string name="field_description_optional">Описание (необязательно)</string>
+    <string name="label_color">Цвет</string>
+    <string name="action_create">Создать</string>
+    <string name="action_cancel">Отмена</string>
+
+    <!-- Экран списка -->
+    <string name="wishes_empty_title">Здесь пока пусто</string>
+    <string name="wishes_empty_subtitle">Добавьте желание по ссылке или вручную\nкнопкой «+»</string>
+
+    <!-- Добавление желания -->
+    <string name="add_wish_title">Новое желание</string>
+    <string name="add_wish_link_section">Ссылка на товар</string>
+    <string name="field_url_hint">https://…</string>
+    <string name="add_wish_parsing">Распознаю…</string>
+    <string name="add_wish_recognize">Распознать автоматически</string>
+    <string name="field_title_required">Название *</string>
+    <string name="field_price">Цена</string>
+    <string name="field_currency_short">Вал.</string>
+    <string name="field_store">Магазин</string>
+    <string name="field_image_url">Ссылка на фото</string>
+    <string name="field_note">Заметка</string>
+    <string name="action_add_to_list">Добавить в список</string>
+
+    <!-- Ошибки распознавания ссылки -->
+    <string name="error_invalid_url">Похоже, это не ссылка. Проверьте адрес.</string>
+    <string name="error_load_failed">Не удалось загрузить страницу</string>
+
+    <!-- Удаление -->
+    <string name="cd_delete_wishlist">Удалить список</string>
+    <string name="dialog_delete_list_title">Удалить список?</string>
+    <string name="dialog_delete_list_message">«%1$s» и все желания в нём будут удалены без возможности восстановления.</string>
+    <string name="dialog_delete_wish_title">Удалить желание?</string>
+    <string name="dialog_delete_wish_message">«%1$s» будет удалено без возможности восстановления.</string>
+    <string name="action_delete">Удалить</string>
+
+    <!-- Несуществующий список -->
+    <string name="wishlist_not_found">Список не найден. Возможно, он был удалён.</string>
+
+    <!-- Авторизация -->
+    <string name="auth_login_title">Вход</string>
+    <string name="auth_register_title">Создать аккаунт</string>
+    <string name="auth_email">Email</string>
+    <string name="auth_password">Пароль</string>
+    <string name="auth_name">Как вас зовут? (необязательно)</string>
+    <string name="auth_login_button">Войти</string>
+    <string name="auth_register_button">Зарегистрироваться</string>
+    <string name="auth_switch_to_register">Нет аккаунта? Создать</string>
+    <string name="auth_switch_to_login">Уже есть аккаунт? Войти</string>
+    <string name="auth_skip">Пропустить</string>
+    <string name="auth_migration_success">Ваши списки сохранены в аккаунте!</string>
+
+    <!-- Профиль -->
+    <string name="profile_title">Профиль</string>
+    <string name="profile_guest">Гость</string>
+    <string name="profile_create_account">Создать аккаунт</string>
+    <string name="profile_logout">Выйти</string>
+    <string name="profile_guest_hint">Создайте аккаунт, чтобы не потерять списки и делиться ими</string>
+
+    <!-- Гостевое предложение -->
+    <string name="signup_prompt_title">Сохранить ваши списки?</string>
+    <string name="signup_prompt_body">Создайте аккаунт, чтобы не потерять желания и иметь возможность делиться ими с близкими. Это займёт меньше минуты.</string>
+    <string name="signup_prompt_action">Создать аккаунт</string>
+    <string name="signup_prompt_later">Позже</string>
+
+    <!-- Нижняя навигация -->
+    <string name="nav_lists">Списки</string>
+    <string name="nav_profile">Профиль</string>
+</resources>

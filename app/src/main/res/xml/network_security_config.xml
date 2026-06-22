@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Wantly распознаёт произвольные ссылки пользователей, включая http://-сайты.
+      Android 9+ (API 28+) по умолчанию блокирует cleartext-трафик, поэтому
+      разрешаем его явно. В Фазе 2 парсинг переедет на сервер (Playwright),
+      и клиент будет ходить только на свой https-бэкенд — тогда это правило уберём.
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
