@@ -72,6 +72,7 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
+        if (st.isSaving) return // защита от двойного нажатия
         update { copy(isSaving = true, error = null) }
         viewModelScope.launch {
             val loggedIn = sessionManager?.isLoggedIn?.first() ?: false
