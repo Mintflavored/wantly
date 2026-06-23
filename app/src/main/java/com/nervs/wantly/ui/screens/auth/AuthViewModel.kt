@@ -72,7 +72,12 @@ class AuthViewModel(
                     saveSession(r.token, r.userId, r.email, r.displayName)
                 }
                 // Синхронизация после входа — без миграции
-                syncManager.syncAfterAuth(isRegistration = false)
+                val ok = syncManager.syncAfterAuth(isRegistration = false)
+                if (!ok) {
+                    update { copy(isLoading = false, error = "Не удалось загрузить данные. Проверьте интернет и войдите снова.") }
+                    sessionManager.clearSession()
+                    return@launch
+                }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка входа") }

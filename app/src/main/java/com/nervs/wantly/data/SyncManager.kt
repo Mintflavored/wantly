@@ -92,7 +92,7 @@ class SyncManager(
                     createdAt = baseTime - index,
                 ),
             )
-            for (wish in detail.wishes) {
+            detail.wishes.forEachIndexed { wishIndex, wish ->
                 database.wishDao().insertWithId(
                     WishEntity(
                         id = wish.id,
@@ -105,6 +105,7 @@ class SyncManager(
                         currency = wish.currency,
                         storeName = wish.storeName,
                         status = wish.status,
+                        createdAt = baseTime - wishIndex,
                     ),
                 )
             }
@@ -114,14 +115,17 @@ class SyncManager(
 
     /**
      * Очистка локальных данных (при выходе из аккаунта).
+     * Берёт mutex чтобы не конфликтовать с идущей синхронизацией.
      */
     suspend fun clearLocal() {
-        try {
-            database.wishDao().clearAll()
-            database.wishlistDao().clearAll()
-            Log.d(TAG, "Локальные данные очищены")
-        } catch (e: Exception) {
-            Log.e(TAG, "Не удалось очистить локальные данные", e)
+        mutex.withLock {
+            try {
+                database.wishDao().clearAll()
+                database.wishlistDao().clearAll()
+                Log.d(TAG, "Локальные данные очищены")
+            } catch (e: Exception) {
+                Log.e(TAG, "Не удалось очистить локальные данные", e)
+            }
         }
     }
 
