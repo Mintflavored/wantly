@@ -75,13 +75,6 @@ fun WantlyNavHost() {
         }
     }
 
-    // Синхронизация: при запуске, если залогинен — тянем актуальные данные с сервера
-    LaunchedEffect(isLoggedIn) {
-        if (isLoggedIn) {
-            app.container.syncManager.fullSync()
-        }
-    }
-
     val showBottomBar = currentRoute in TABS.map { it.route }
 
     Scaffold(

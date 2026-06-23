@@ -17,11 +17,11 @@ class AppContainer(context: Context) {
     val guestCounter = GuestCounter(context)
     val linkPreviewService = LinkPreviewService()
     val api = WantlyApi(tokenProvider = { sessionManager.tokenBlocking() })
-    val syncManager = SyncManager(database, api)
     val repository = WishlistRepository(
         wishlistDao = database.wishlistDao(),
         wishDao = database.wishDao(),
         linkPreviewService = linkPreviewService,
         api = api,
     )
+    val syncManager = SyncManager(database, repository)
 }

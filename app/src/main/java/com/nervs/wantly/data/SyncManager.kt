@@ -4,97 +4,116 @@ import android.util.Log
 import com.nervs.wantly.data.local.WantlyDatabase
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
-import com.nervs.wantly.data.remote.WantlyApi
+import com.nervs.wantly.data.repository.WishlistRepository
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
- * Синхронизация: сервер → локальная БД.
+ * Синхронизация: сервер ↔ локальная БД.
  *
- * Стратегия: server-as-truth. После логина сервер — источник правды.
- * Полная замена локальных данных (wipe + re-insert) при каждом pull.
+ * Архитектура: синхронизация запускается только из двух мест —
+ * 1. [syncAfterAuth] — после login/register (из AuthViewModel)
+ * 2. [syncIfLoggedIn] — при запуске приложения (из WantlyApp)
  *
- * Это просто и надёжно; conflict resolution не нужен т.к. dual-write
- * в Repository гарантирует что сервер всегда актуален.
+ * Никаких LaunchedEffect(isLoggedIn), skipAutoSync, fullSyncForce —
+ * единая точка входа, Mutex против гонок.
  */
 class SyncManager(
     private val database: WantlyDatabase,
-    private val api: WantlyApi,
+    private val repository: WishlistRepository,
 ) {
-    /** Когда true — LaunchedEffect-синхронизацию пропускаем (идёт миграция/вход). */
-    @Volatile
-    var skipAutoSync = false
+    private val mutex = Mutex()
 
     /**
-     * Полная синхронизация: получить все списки с сервера → заменить Room.
-     * Вызывается при запуске (если залогинен) и после login/register.
+     * Синхронизация после авторизации.
+     *
+     * @param isRegistration true при регистрации — мигрирует локальные данные гостя.
+     * @return true при успехе, false при ошибке миграции или синхронизации.
      */
-    /**
-     * Принудительная синхронизация — игнорирует skipAutoSync.
-     * Используется после миграции при регистрации.
-     */
-    suspend fun fullSyncForce() {
-        val prev = skipAutoSync
-        skipAutoSync = false
-        try {
-            fullSync()
-        } finally {
-            skipAutoSync = prev
+    suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
+        return mutex.withLock {
+            try {
+                if (isRegistration) {
+                    // Мигрируем локальные данные гостя на сервер.
+                    // При ошибке — НЕ продолжаем, возвращаем false.
+                    val migrated = runCatching { repository.migrateLocalToServer() }
+                        .onFailure { Log.e(TAG, "Миграция не удалась", it) }
+                        .isSuccess
+                    if (!migrated) return@withLock false
+                }
+                fullSync()
+                Log.d(TAG, "syncAfterAuth завершён успешно")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "syncAfterAuth не удалась", e)
+                false
+            }
         }
     }
 
-    suspend fun fullSync() {
-        if (skipAutoSync) return
-        try {
-            Log.d(TAG, "Начинаю fullSync...")
-            val remoteLists = api.getWishlists()
+    /**
+     * Синхронизация при запуске — только если есть сохранённый токен.
+     * Ничего не делает если пользователь — гость.
+     */
+    suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
+        if (!isLoggedIn) return
+        mutex.withLock {
+            runCatching { fullSync() }
+                .onFailure { Log.e(TAG, "Стартовая синхронизация не удалась", it) }
+        }
+    }
 
-            // Сначала загружаем все данные с сервера в память,
-            // и только если всё прошло успешно — заменяем Room.
-            val details = remoteLists.map { api.getWishlistDetail(it.id) }
+    /**
+     * Полная синхронизация: получить все списки с сервера → заменить Room.
+     *
+     * Сначала загружает все данные в память, потом атомарно заменяет Room.
+     * При ошибке — Room остаётся нетронутым (offline-first).
+     */
+    private suspend fun fullSync() {
+        Log.d(TAG, "Начинаю fullSync...")
+        val remoteLists = repository.api.getWishlists()
 
-            // Wipe + re-insert — атомарная замена только после успешного pull
-            database.wishlistDao().clearAll()
-            database.wishDao().clearAll()
+        // Сначала загружаем все детали в память
+        val details = remoteLists.map { repository.api.getWishlistDetail(it.id) }
 
-            // Сохраняем порядок сервера: первый список получает наибольший
-            // timestamp (observeAllWithCount сортирует DESC).
-            val baseTime = System.currentTimeMillis()
-            details.forEachIndexed { index, detail ->
-                database.wishlistDao().insertWithId(
-                    WishlistEntity(
-                        id = detail.wishlist.id,
-                        title = detail.wishlist.title,
-                        description = detail.wishlist.description,
-                        coverColor = detail.wishlist.coverColor,
-                        createdAt = baseTime - index,
+        // Атомарная замена — только после успешного pull
+        database.wishlistDao().clearAll()
+        database.wishDao().clearAll()
+
+        // Сохраняем порядок сервера: первый список = наибольший timestamp
+        val baseTime = System.currentTimeMillis()
+        details.forEachIndexed { index, detail ->
+            database.wishlistDao().insertWithId(
+                WishlistEntity(
+                    id = detail.wishlist.id,
+                    title = detail.wishlist.title,
+                    description = detail.wishlist.description,
+                    coverColor = detail.wishlist.coverColor,
+                    createdAt = baseTime - index,
+                ),
+            )
+            for (wish in detail.wishes) {
+                database.wishDao().insertWithId(
+                    WishEntity(
+                        id = wish.id,
+                        wishlistId = wish.wishlistId,
+                        title = wish.title,
+                        description = wish.description,
+                        url = wish.url,
+                        imageUrl = wish.imageUrl,
+                        price = wish.price,
+                        currency = wish.currency,
+                        storeName = wish.storeName,
+                        status = wish.status,
                     ),
                 )
-                for (wish in detail.wishes) {
-                    database.wishDao().insertWithId(
-                        WishEntity(
-                            id = wish.id,
-                            wishlistId = wish.wishlistId,
-                            title = wish.title,
-                            description = wish.description,
-                            url = wish.url,
-                            imageUrl = wish.imageUrl,
-                            price = wish.price,
-                            currency = wish.currency,
-                            storeName = wish.storeName,
-                            status = wish.status,
-                        ),
-                    )
-                }
             }
-            Log.d(TAG, "fullSync завершён: ${remoteLists.size} списков")
-        } catch (e: Exception) {
-            Log.e(TAG, "fullSync не удался", e)
-            // Не падаем — работаем offline с последними данными из Room
         }
+        Log.d(TAG, "fullSync завершён: ${remoteLists.size} списков")
     }
 
     /**
      * Очистка локальных данных (при выходе из аккаунта).
-     * Гость не должен видеть данные предыдущего залогиненного пользователя.
      */
     suspend fun clearLocal() {
         try {

@@ -3,6 +3,7 @@ package com.nervs.wantly.ui.screens.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nervs.wantly.data.SessionManager
+import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +23,7 @@ data class AuthUiState(
 class AuthViewModel(
     private val sessionManager: SessionManager,
     private val repository: WishlistRepository,
-    private val syncManager: com.nervs.wantly.data.SyncManager,
+    private val syncManager: SyncManager,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState = _uiState.asStateFlow()
@@ -37,30 +38,25 @@ class AuthViewModel(
         update { copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
-                // Блокируем авто-синхронизацию ДО saveSession — иначе
-                // LaunchedEffect(isLoggedIn) успеет запустить fullSync
-                // и стереть Room до завершения миграции.
-                syncManager.skipAutoSync = true
-                val resp = sessionManager.run {
+                sessionManager.run {
                     val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
                     saveSession(r.token, r.userId, r.email, r.displayName)
-                    r
                 }
-                // Мигрируем локальные данные гостя на сервер.
-                val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
-                if (migrated) {
-                    // fullSyncForce — принудительная синхронизация (игнорирует
-                    // skipAutoSync). Заменяет локальные гостевые ID на серверные.
-                    syncManager.fullSyncForce()
+                // Единая точка: миграция + синхронизация.
+                // При ошибке миграции — показываем ошибку, не входим в server mode.
+                val ok = syncManager.syncAfterAuth(isRegistration = true)
+                if (!ok) {
+                    // Сессия сохранена, но данные не синхронизированы.
+                    // Пользователь залогинен, но увидит ошибку — может повторить.
+                    update { copy(isLoading = false, error = "Не удалось перенести данные. Проверьте интернет и войдите снова.") }
+                    sessionManager.clearSession()
+                    return@launch
                 }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
             } catch (e: Exception) {
                 update { copy(isLoading = false, error = "Проверьте интернет-соединение") }
-            } finally {
-                // Гарантированный сброс флага — даже при ошибке регистрации
-                syncManager.skipAutoSync = false
             }
         }
     }
@@ -71,12 +67,12 @@ class AuthViewModel(
         update { copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
-                val resp = sessionManager.run {
+                sessionManager.run {
                     val r = repository.api.login(st.email.trim(), st.password)
                     saveSession(r.token, r.userId, r.email, r.displayName)
-                    r
                 }
-                runCatching { syncManager.fullSync() }
+                // Синхронизация после входа — без миграции
+                syncManager.syncAfterAuth(isRegistration = false)
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка входа") }
