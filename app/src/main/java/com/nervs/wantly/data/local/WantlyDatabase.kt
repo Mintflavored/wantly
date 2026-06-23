@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 3,
+    version = 2,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -22,7 +22,11 @@ abstract class WantlyDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: WantlyDatabase? = null
 
-        /** Migration 1→2: добавлены synced, pendingDelete, serverId колонки. */
+        /**
+         * Migration 1→2: добавлены serverId, synced, pendingDelete.
+         * synced=0 (DEFAULT) — старые гостевые данные помечаются dirty,
+         * чтобы синхронизироваться при первом входе.
+         */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER")
@@ -34,14 +38,6 @@ abstract class WantlyDatabase : RoomDatabase() {
             }
         }
 
-        /** Migration 2→3: добавлена serverId колонка. */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER DEFAULT NULL")
-            }
-        }
-
         fun get(context: Context): WantlyDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -49,7 +45,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                     .also { INSTANCE = it }
             }

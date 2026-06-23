@@ -42,6 +42,8 @@ class SyncManager(
             try {
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
+                // Drain: если за время sync были локальные изменения — отправляем
+                drainScheduledPush()
                 Log.d(TAG, "syncAfterAuth завершён (registration=$isRegistration)")
                 true
             } catch (e: Exception) {
@@ -59,6 +61,7 @@ class SyncManager(
             runCatching {
                 pushPendingInternal()
                 pullInternal()
+                drainScheduledPush()
             }.onFailure { Log.e(TAG, "Стартовая синхронизация не удалась", it) }
         }
     }
@@ -78,13 +81,17 @@ class SyncManager(
         }
         try {
             pushPendingInternal()
-            // Если за время push были новые локальные изменения — повторяем
-            if (pushPendingScheduled) {
-                pushPendingScheduled = false
-                pushPendingInternal()
-            }
+            drainScheduledPush()
         } finally {
             mutex.unlock()
+        }
+    }
+
+    /** Отправляем накопленные dirty-записи если был запланирован повтор. */
+    private suspend fun drainScheduledPush() {
+        if (pushPendingScheduled) {
+            pushPendingScheduled = false
+            pushPendingInternal()
         }
     }
 
@@ -167,9 +174,11 @@ class SyncManager(
         val remoteLists = api.getWishlists()
         val details = remoteLists.map { api.getWishlistDetail(it.id) }
 
-        // Сохраняем dirty-записи которые ещё не отправлены
+        // Сохраняем dirty-записи и tombstones которые ещё не отправлены
         val dirtyWishlists = database.wishlistDao().getUnsynced()
         val dirtyWishes = database.wishDao().getUnsynced()
+        val tombstoneWishlists = database.wishlistDao().getPendingDelete()
+        val tombstoneWishes = database.wishDao().getPendingDelete()
 
         database.withTransaction {
             database.wishlistDao().clearAll()
@@ -209,15 +218,21 @@ class SyncManager(
                 }
             }
 
-            // Восстанавливаем dirty-записи (они отправятся в следующий push)
+            // Восстанавливаем dirty-записи и tombstones
             for (list in dirtyWishlists) {
                 database.wishlistDao().insertWithId(list.copy(synced = false))
             }
             for (wish in dirtyWishes) {
                 database.wishDao().insertWithId(wish.copy(synced = false))
             }
+            for (list in tombstoneWishlists) {
+                database.wishlistDao().insertWithId(list)
+            }
+            for (wish in tombstoneWishes) {
+                database.wishDao().insertWithId(wish)
+            }
         }
-        Log.d(TAG, "pull завершён: ${remoteLists.size} списков, сохранено ${dirtyWishlists.size}/${dirtyWishes.size} dirty")
+        Log.d(TAG, "pull завершён: ${remoteLists.size} списков, ${dirtyWishlists.size}/${dirtyWishes.size} dirty, ${tombstoneWishlists.size}/${tombstoneWishes.size} tombstones")
     }
 
     companion object {
