@@ -20,6 +20,7 @@ data class AddWishUiState(
     val storeName: String = "",
     val imageUrl: String = "",
     val isParsing: Boolean = false,
+    val isSaving: Boolean = false,
     val error: LinkPreviewError? = null,
 ) {
     val canSave: Boolean get() = title.isNotBlank()
@@ -71,9 +72,10 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
+        update { copy(isSaving = true, error = null) }
         viewModelScope.launch {
             val loggedIn = sessionManager?.isLoggedIn?.first() ?: false
-            repository.addWish(
+            val result = repository.addWish(
                 wishlistId,
                 WishDraft(
                     title = st.title.trim(),
@@ -86,8 +88,13 @@ class AddWishViewModel(
                 ),
                 isLoggedIn = loggedIn,
             )
-            guestCounter?.incrementWish()
-            onDone()
+            if (result != null) {
+                guestCounter?.incrementWish()
+                onDone()
+            } else {
+                // Сервер недоступен — форма остаётся открытой, данные не потеряны
+                update { copy(isSaving = false, error = com.nervs.wantly.data.remote.LinkPreviewError.LOAD_FAILED) }
+            }
         }
     }
 

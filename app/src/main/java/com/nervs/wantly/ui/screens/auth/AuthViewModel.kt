@@ -49,10 +49,9 @@ class AuthViewModel(
                 // Мигрируем локальные данные гостя на сервер.
                 val migrated = runCatching { repository.migrateLocalToServer() }.isSuccess
                 if (migrated) {
-                    // fullSync — критичен: заменяет локальные гостевые ID
-                    // на серверные. Не глушим ошибку — если упало, пользователь
-                    // увидит сообщение и сможет повторить вход.
-                    syncManager.fullSync()
+                    // fullSyncForce — принудительная синхронизация (игнорирует
+                    // skipAutoSync). Заменяет локальные гостевые ID на серверные.
+                    syncManager.fullSyncForce()
                 }
                 update { copy(isLoading = false, isSuccess = true) }
             } catch (e: ApiException) {

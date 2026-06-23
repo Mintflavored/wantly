@@ -27,6 +27,20 @@ class SyncManager(
      * Полная синхронизация: получить все списки с сервера → заменить Room.
      * Вызывается при запуске (если залогинен) и после login/register.
      */
+    /**
+     * Принудительная синхронизация — игнорирует skipAutoSync.
+     * Используется после миграции при регистрации.
+     */
+    suspend fun fullSyncForce() {
+        val prev = skipAutoSync
+        skipAutoSync = false
+        try {
+            fullSync()
+        } finally {
+            skipAutoSync = prev
+        }
+    }
+
     suspend fun fullSync() {
         if (skipAutoSync) return
         try {
