@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -22,13 +22,23 @@ abstract class WantlyDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: WantlyDatabase? = null
 
-        /** Migration 1→2: добавлены synced и pendingDelete колонки. */
+        /** Migration 1→2: добавлены synced, pendingDelete, serverId колонки. */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Migration 2→3: добавлена serverId колонка. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER DEFAULT NULL")
             }
         }
 
@@ -39,7 +49,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { INSTANCE = it }
             }

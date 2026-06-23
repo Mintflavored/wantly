@@ -44,8 +44,8 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1")
     suspend fun getPendingDelete(): List<WishlistEntity>
 
-    @Query("UPDATE wishlists SET id = :newId, synced = 1 WHERE id = :oldId")
-    suspend fun updateServerId(oldId: Long, newId: Long)
+    @Query("UPDATE wishlists SET serverId = :serverId, synced = 1 WHERE id = :localId")
+    suspend fun setServerId(localId: Long, serverId: Long)
 
     @Query("UPDATE wishlists SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)

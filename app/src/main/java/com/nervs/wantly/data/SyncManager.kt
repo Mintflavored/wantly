@@ -11,7 +11,6 @@ import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,49 +18,30 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Local-first синхронизация.
  *
- * Принципы:
- * 1. Room — единственный источник правды для UI. UI всегда читает из Room.
- * 2. Все записи идут в Room мгновенно с synced=false (dirty).
- * 3. [pushPending] — отправляет dirty-записи на сервер в фоне.
- * 4. [pullFromServer] — заменяет Room данными сервера (при запуске/login).
- *
- * Sync запускается из двух мест:
- * - [syncAfterAuth] — после login/register (из AuthViewModel)
- * - [syncIfLoggedIn] — при запуске приложения (из WantlyApp)
- * - [pushPending] — после каждой локальной операции (из Repository)
- *
- * Нет гонок: Mutex сериализует все sync-операции.
- * Нет блокировки UI: pushPending работает в фоне, UI не ждёт.
+ * Локальный Room ID (autoGenerate) и серверный ID (serverId) хранятся раздельно.
+ * serverId = null → локальная запись, не отправлена на сервер.
+ * serverId != null → серверная запись, можно PATCH/DELETE.
  */
 class SyncManager(
     private val database: WantlyDatabase,
     private val api: WantlyApi,
 ) {
     private val mutex = Mutex()
-
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /**
-     * После авторизации: миграция (при регистрации) → pull.
-     * Запускается в application scope — не отменяется при закрытии экрана.
-     */
-    suspend fun syncAfterAuthScoped(isRegistration: Boolean) {
+    @Volatile
+    private var startupSyncDone = false
+
+    /** Sync после авторизации — в application scope. */
+    fun syncAfterAuthScoped(isRegistration: Boolean) {
         appScope.launch { syncAfterAuth(isRegistration) }
     }
 
-    /**
-     * После авторизации: миграция (при регистрации) → pull.
-     * Гостевые данные уже в Room с synced=false → pushPending их отправит.
-     */
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
         return mutex.withLock {
             try {
-                if (isRegistration) {
-                    // Гостевые данные в Room уже помечены synced=false.
-                    // Отправляем на сервер, получаем серверные ID.
-                    pushPendingInternal()
-                }
-                pullInternal()
+                pushPendingInternal()
+                if (!isRegistration) pullInternal()
                 Log.d(TAG, "syncAfterAuth завершён (registration=$isRegistration)")
                 true
             } catch (e: Exception) {
@@ -71,12 +51,7 @@ class SyncManager(
         }
     }
 
-    /**
-     * Стартовая синхронизация — один раз за сессию.
-     */
-    @Volatile
-    private var startupSyncDone = false
-
+    /** Стартовая синхронизация — один раз. */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
         startupSyncDone = true
@@ -90,20 +65,30 @@ class SyncManager(
 
     /**
      * Фоновая отправка dirty-записей.
-     * Вызывается после каждой локальной операции если залогинен.
+     * Если mutex занят — планируем повтор после текущего sync.
      */
+    @Volatile
+    private var pushPendingScheduled = false
+
     suspend fun pushPending() {
-        if (!mutex.tryLock()) return // уже идёт sync — не блокируем
+        if (!mutex.tryLock()) {
+            // Sync идёт — планируем повтор
+            pushPendingScheduled = true
+            return
+        }
         try {
             pushPendingInternal()
+            // Если за время push были новые локальные изменения — повторяем
+            if (pushPendingScheduled) {
+                pushPendingScheduled = false
+                pushPendingInternal()
+            }
         } finally {
             mutex.unlock()
         }
     }
 
-    /**
-     * Очистка локальных данных (при выходе).
-     */
+    /** Очистка Room при выходе. */
     suspend fun clearLocal() {
         mutex.withLock {
             database.withTransaction {
@@ -114,44 +99,47 @@ class SyncManager(
         }
     }
 
-    // ── Внутренние методы (вызываются под mutex) ──────────
+    // ── Внутренние (под mutex) ────────────────────────────
 
     private suspend fun pushPendingInternal() {
-        // 1. Отправляем удаления — tombstone удаляем только при успехе
-        for (wish in database.wishDao().getPendingDelete()) {
-            val ok = runCatching { api.deleteWish(wish.id) }.isSuccess
-            if (ok) database.wishDao().deleteById(wish.id)
-        }
-        for (list in database.wishlistDao().getPendingDelete()) {
-            val ok = runCatching { api.deleteWishlist(list.id) }.isSuccess
-            if (ok) database.wishlistDao().deleteById(list.id)
-        }
+        val wishDao = database.wishDao()
+        val listDao = database.wishlistDao()
 
-        // 2. Отправляем новые/изменённые списки
-        for (list in database.wishlistDao().getUnsynced()) {
-            val remote = runCatching {
-                api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
-            }.getOrNull() ?: continue
-            // Обновляем локальный ID на серверный + FK в wishes
-            database.withTransaction {
-                database.wishDao().updateWishlistId(list.id, remote.id)
-                database.wishlistDao().updateServerId(list.id, remote.id)
+        // 1. DELETE: отправляем tombstones, удаляем только при успехе
+        for (wish in wishDao.getPendingDelete()) {
+            val sid = wish.serverId ?: run {
+                wishDao.deleteById(wish.id); continue
             }
-            database.wishlistDao().markSynced(remote.id)
+            if (runCatching { api.deleteWish(sid) }.isSuccess) wishDao.deleteById(wish.id)
+        }
+        for (list in listDao.getPendingDelete()) {
+            val sid = list.serverId ?: run {
+                listDao.deleteById(list.id); continue
+            }
+            if (runCatching { api.deleteWishlist(sid) }.isSuccess) listDao.deleteById(list.id)
         }
 
-        // 3. Отправляем новые/изменённые желания
-        for (wish in database.wishDao().getUnsynced()) {
-            val wishlist = database.wishlistDao().getById(wish.wishlistId) ?: continue
-            // Если wish уже имеет серверный ID (был sync) — обновляем, не создаём
-            val wasSynced = wish.id > 0 && wish.id < 1_000_000_000L // эвристика: локальные ID > 1 млрд
+        // 2. CREATE/UPDATE wishlists
+        for (list in listDao.getUnsynced()) {
+            if (list.serverId == null) {
+                // Новая — POST
+                val remote = runCatching {
+                    api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
+                }.getOrNull() ?: continue
+                listDao.setServerId(list.id, remote.id)
+            }
+            // UPDATE для существующих — в Фазе 4 (редактирование списков)
+        }
 
-            val success = if (wasSynced) {
-                runCatching { api.updateWishStatus(wish.id, wish.status) }.isSuccess
-            } else {
+        // 3. CREATE/UPDATE wishes
+        for (wish in wishDao.getUnsynced()) {
+            val wishlist = listDao.getById(wish.wishlistId) ?: continue
+            val wishlistServerId = wishlist.serverId ?: continue // список ещё не отправлен
+            if (wish.serverId == null) {
+                // Новая — POST
                 val remote = runCatching {
                     api.createWish(
-                        wishlist.id,
+                        wishlistServerId,
                         CreateWishRequest(
                             title = wish.title,
                             description = wish.description,
@@ -164,10 +152,13 @@ class SyncManager(
                         ),
                     )
                 }.getOrNull() ?: continue
-                database.wishDao().updateServerId(wish.id, remote.id)
-                true
+                wishDao.setServerId(wish.id, remote.id)
+            } else {
+                // Существующая — PATCH статуса
+                if (runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }.isSuccess) {
+                    wishDao.markSynced(wish.id)
+                }
             }
-            if (success) database.wishDao().markSynced(wish.id)
         }
         Log.d(TAG, "pushPending завершён")
     }
@@ -175,6 +166,10 @@ class SyncManager(
     private suspend fun pullInternal() {
         val remoteLists = api.getWishlists()
         val details = remoteLists.map { api.getWishlistDetail(it.id) }
+
+        // Сохраняем dirty-записи которые ещё не отправлены
+        val dirtyWishlists = database.wishlistDao().getUnsynced()
+        val dirtyWishes = database.wishDao().getUnsynced()
 
         database.withTransaction {
             database.wishlistDao().clearAll()
@@ -189,6 +184,7 @@ class SyncManager(
                         description = detail.wishlist.description,
                         coverColor = detail.wishlist.coverColor,
                         createdAt = baseTime - index,
+                        serverId = detail.wishlist.id,
                         synced = true,
                     ),
                 )
@@ -206,13 +202,22 @@ class SyncManager(
                             storeName = wish.storeName,
                             status = wish.status,
                             createdAt = baseTime - wishIndex,
+                            serverId = wish.id,
                             synced = true,
                         ),
                     )
                 }
             }
+
+            // Восстанавливаем dirty-записи (они отправятся в следующий push)
+            for (list in dirtyWishlists) {
+                database.wishlistDao().insertWithId(list.copy(synced = false))
+            }
+            for (wish in dirtyWishes) {
+                database.wishDao().insertWithId(wish.copy(synced = false))
+            }
         }
-        Log.d(TAG, "pull завершён: ${remoteLists.size} списков")
+        Log.d(TAG, "pull завершён: ${remoteLists.size} списков, сохранено ${dirtyWishlists.size}/${dirtyWishes.size} dirty")
     }
 
     companion object {

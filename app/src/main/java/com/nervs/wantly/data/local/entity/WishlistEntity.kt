@@ -14,6 +14,8 @@ data class WishlistEntity(
     /** Индекс акцентного цвета карточки (палитра в ui.theme). */
     val coverColor: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Серверный ID. null = не отправлено на сервер. */
+    val serverId: Long? = null,
     /** false = локальное изменение, не отправленное на сервер. */
     val synced: Boolean = true,
     /** true = удалено локально, нужно отправить DELETE на сервер. */

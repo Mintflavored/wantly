@@ -32,6 +32,8 @@ data class WishEntity(
     val status: String = WishStatus.WANTED.name,
     val sortOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Серверный ID. null = не отправлено на сервер. */
+    val serverId: Long? = null,
     /** false = локальное изменение, не отправленное на сервер. */
     val synced: Boolean = true,
     /** true = удалено локально, нужно отправить DELETE на сервер. */

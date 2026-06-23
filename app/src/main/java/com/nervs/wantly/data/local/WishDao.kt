@@ -40,8 +40,8 @@ interface WishDao {
     @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1")
     suspend fun getPendingDelete(): List<WishEntity>
 
-    @Query("UPDATE wishes SET id = :newId, synced = 1 WHERE id = :oldId")
-    suspend fun updateServerId(oldId: Long, newId: Long)
+    @Query("UPDATE wishes SET serverId = :serverId, synced = 1 WHERE id = :localId")
+    suspend fun setServerId(localId: Long, serverId: Long)
 
     @Query("UPDATE wishes SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
