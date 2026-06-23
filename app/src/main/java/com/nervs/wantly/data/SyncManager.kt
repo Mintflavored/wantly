@@ -1,6 +1,7 @@
 package com.nervs.wantly.data
 
 import android.util.Log
+import androidx.room.withTransaction
 import com.nervs.wantly.data.local.WantlyDatabase
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
@@ -51,12 +52,17 @@ class SyncManager(
         }
     }
 
+    /** Флаг: стартовая синхронизация уже была в этой сессии. */
+    @Volatile
+    private var startupSyncDone = false
+
     /**
      * Синхронизация при запуске — только если есть сохранённый токен.
-     * Ничего не делает если пользователь — гость.
+     * Выполняется один раз за сессию приложения.
      */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
-        if (!isLoggedIn) return
+        if (!isLoggedIn || startupSyncDone) return
+        startupSyncDone = true
         mutex.withLock {
             runCatching { fullSync() }
                 .onFailure { Log.e(TAG, "Стартовая синхронизация не удалась", it) }
@@ -76,38 +82,40 @@ class SyncManager(
         // Сначала загружаем все детали в память
         val details = remoteLists.map { repository.api.getWishlistDetail(it.id) }
 
-        // Атомарная замена — только после успешного pull
-        database.wishlistDao().clearAll()
-        database.wishDao().clearAll()
+        // Атомарная замена — только после успешного pull.
+        // Транзакция: при ошибке/cancel rollback, кэш не теряется.
+        database.withTransaction {
+            database.wishlistDao().clearAll()
+            database.wishDao().clearAll()
 
-        // Сохраняем порядок сервера: первый список = наибольший timestamp
-        val baseTime = System.currentTimeMillis()
-        details.forEachIndexed { index, detail ->
-            database.wishlistDao().insertWithId(
-                WishlistEntity(
-                    id = detail.wishlist.id,
-                    title = detail.wishlist.title,
-                    description = detail.wishlist.description,
-                    coverColor = detail.wishlist.coverColor,
-                    createdAt = baseTime - index,
-                ),
-            )
-            detail.wishes.forEachIndexed { wishIndex, wish ->
-                database.wishDao().insertWithId(
-                    WishEntity(
-                        id = wish.id,
-                        wishlistId = wish.wishlistId,
-                        title = wish.title,
-                        description = wish.description,
-                        url = wish.url,
-                        imageUrl = wish.imageUrl,
-                        price = wish.price,
-                        currency = wish.currency,
-                        storeName = wish.storeName,
-                        status = wish.status,
-                        createdAt = baseTime - wishIndex,
+            val baseTime = System.currentTimeMillis()
+            details.forEachIndexed { index, detail ->
+                database.wishlistDao().insertWithId(
+                    WishlistEntity(
+                        id = detail.wishlist.id,
+                        title = detail.wishlist.title,
+                        description = detail.wishlist.description,
+                        coverColor = detail.wishlist.coverColor,
+                        createdAt = baseTime - index,
                     ),
                 )
+                detail.wishes.forEachIndexed { wishIndex, wish ->
+                    database.wishDao().insertWithId(
+                        WishEntity(
+                            id = wish.id,
+                            wishlistId = wish.wishlistId,
+                            title = wish.title,
+                            description = wish.description,
+                            url = wish.url,
+                            imageUrl = wish.imageUrl,
+                            price = wish.price,
+                            currency = wish.currency,
+                            storeName = wish.storeName,
+                            status = wish.status,
+                            createdAt = baseTime - wishIndex,
+                        ),
+                    )
+                }
             }
         }
         Log.d(TAG, "fullSync завершён: ${remoteLists.size} списков")

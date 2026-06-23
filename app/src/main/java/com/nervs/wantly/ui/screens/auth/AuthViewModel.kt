@@ -43,13 +43,19 @@ class AuthViewModel(
                     saveSession(r.token, r.userId, r.email, r.displayName)
                 }
                 // Единая точка: миграция + синхронизация.
-                // При ошибке миграции — показываем ошибку, не входим в server mode.
                 val ok = syncManager.syncAfterAuth(isRegistration = true)
                 if (!ok) {
-                    // Сессия сохранена, но данные не синхронизированы.
-                    // Пользователь залогинен, но увидит ошибку — может повторить.
-                    update { copy(isLoading = false, error = "Не удалось перенести данные. Проверьте интернет и войдите снова.") }
-                    sessionManager.clearSession()
+                    // Аккаунт создан, но миграция/синхронизация не удалась.
+                    // НЕ очищаем сессию — гость не теряет данные.
+                    // Локальные данные остаются в Room, серверный токен сохранён.
+                    // При следующем запуске syncIfLoggedIn подтянет данные.
+                    update {
+                        copy(
+                            isLoading = false,
+                            error = "Аккаунт создан, но не удалось синхронизировать. Данные сохранятся при следующем входе.",
+                            isSuccess = true, // Всё же входим — аккаунт создан
+                        )
+                    }
                     return@launch
                 }
                 update { copy(isLoading = false, isSuccess = true) }
