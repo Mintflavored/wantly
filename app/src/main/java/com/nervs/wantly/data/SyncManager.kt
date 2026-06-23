@@ -218,18 +218,36 @@ class SyncManager(
                 }
             }
 
-            // Восстанавливаем dirty-записи и tombstones
+            // Восстанавливаем dirty-записи и tombstones.
+            // Мапим старые локальные wishlistId на serverId (если родитель уже отправлен).
+            val wishlistIdMap = mutableMapOf<Long, Long>()
             for (list in dirtyWishlists) {
-                database.wishlistDao().insertWithId(list.copy(synced = false))
+                // Если у dirty списка есть serverId — его локальный ID меняется на serverId
+                if (list.serverId != null) {
+                    wishlistIdMap[list.id] = list.serverId
+                }
+                database.wishlistDao().insertWithId(list.copy(
+                    synced = false,
+                    // Если serverId есть — локальный ID = serverId
+                    id = list.serverId ?: list.id,
+                ))
             }
             for (wish in dirtyWishes) {
-                database.wishDao().insertWithId(wish.copy(synced = false))
+                // Remap wishlistId: если родитель получил serverId, используем его
+                val remappedWishlistId = wishlistIdMap[wish.wishlistId] ?: wish.wishlistId
+                database.wishDao().insertWithId(wish.copy(
+                    synced = false,
+                    wishlistId = remappedWishlistId,
+                ))
             }
             for (list in tombstoneWishlists) {
-                database.wishlistDao().insertWithId(list)
+                database.wishlistDao().insertWithId(list.copy(
+                    id = list.serverId ?: list.id,
+                ))
             }
             for (wish in tombstoneWishes) {
-                database.wishDao().insertWithId(wish)
+                val remappedWishlistId = wishlistIdMap[wish.wishlistId] ?: wish.wishlistId
+                database.wishDao().insertWithId(wish.copy(wishlistId = remappedWishlistId))
             }
         }
         Log.d(TAG, "pull завершён: ${remoteLists.size} списков, ${dirtyWishlists.size}/${dirtyWishes.size} dirty, ${tombstoneWishlists.size}/${tombstoneWishes.size} tombstones")
