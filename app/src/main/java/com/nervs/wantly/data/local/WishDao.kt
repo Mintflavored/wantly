@@ -52,6 +52,9 @@ interface WishDao {
     @Query("DELETE FROM wishes")
     suspend fun clearAll()
 
+    @Query("UPDATE wishes SET wishlistId = :newId WHERE wishlistId = :oldId")
+    suspend fun updateWishlistId(oldId: Long, newId: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWithId(wish: WishEntity)
 }

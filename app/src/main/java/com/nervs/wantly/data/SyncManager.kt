@@ -8,6 +8,11 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -33,6 +38,16 @@ class SyncManager(
     private val api: WantlyApi,
 ) {
     private val mutex = Mutex()
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * После авторизации: миграция (при регистрации) → pull.
+     * Запускается в application scope — не отменяется при закрытии экрана.
+     */
+    suspend fun syncAfterAuthScoped(isRegistration: Boolean) {
+        appScope.launch { syncAfterAuth(isRegistration) }
+    }
 
     /**
      * После авторизации: миграция (при регистрации) → pull.
@@ -102,14 +117,14 @@ class SyncManager(
     // ── Внутренние методы (вызываются под mutex) ──────────
 
     private suspend fun pushPendingInternal() {
-        // 1. Отправляем удаления
+        // 1. Отправляем удаления — tombstone удаляем только при успехе
         for (wish in database.wishDao().getPendingDelete()) {
-            runCatching { api.deleteWish(wish.id) }
-            database.wishDao().deleteById(wish.id)
+            val ok = runCatching { api.deleteWish(wish.id) }.isSuccess
+            if (ok) database.wishDao().deleteById(wish.id)
         }
         for (list in database.wishlistDao().getPendingDelete()) {
-            runCatching { api.deleteWishlist(list.id) }
-            database.wishlistDao().deleteById(list.id)
+            val ok = runCatching { api.deleteWishlist(list.id) }.isSuccess
+            if (ok) database.wishlistDao().deleteById(list.id)
         }
 
         // 2. Отправляем новые/изменённые списки
@@ -117,29 +132,42 @@ class SyncManager(
             val remote = runCatching {
                 api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
             }.getOrNull() ?: continue
-            // Обновляем локальный ID на серверный
-            database.wishlistDao().updateServerId(list.id, remote.id)
+            // Обновляем локальный ID на серверный + FK в wishes
+            database.withTransaction {
+                database.wishDao().updateWishlistId(list.id, remote.id)
+                database.wishlistDao().updateServerId(list.id, remote.id)
+            }
+            database.wishlistDao().markSynced(remote.id)
         }
 
         // 3. Отправляем новые/изменённые желания
         for (wish in database.wishDao().getUnsynced()) {
             val wishlist = database.wishlistDao().getById(wish.wishlistId) ?: continue
-            val remote = runCatching {
-                api.createWish(
-                    wishlist.id,
-                    CreateWishRequest(
-                        title = wish.title,
-                        description = wish.description,
-                        url = wish.url,
-                        imageUrl = wish.imageUrl,
-                        price = wish.price,
-                        currency = wish.currency,
-                        storeName = wish.storeName,
-                        status = wish.status,
-                    ),
-                )
-            }.getOrNull() ?: continue
-            database.wishDao().updateServerId(wish.id, remote.id)
+            // Если wish уже имеет серверный ID (был sync) — обновляем, не создаём
+            val wasSynced = wish.id > 0 && wish.id < 1_000_000_000L // эвристика: локальные ID > 1 млрд
+
+            val success = if (wasSynced) {
+                runCatching { api.updateWishStatus(wish.id, wish.status) }.isSuccess
+            } else {
+                val remote = runCatching {
+                    api.createWish(
+                        wishlist.id,
+                        CreateWishRequest(
+                            title = wish.title,
+                            description = wish.description,
+                            url = wish.url,
+                            imageUrl = wish.imageUrl,
+                            price = wish.price,
+                            currency = wish.currency,
+                            storeName = wish.storeName,
+                            status = wish.status,
+                        ),
+                    )
+                }.getOrNull() ?: continue
+                database.wishDao().updateServerId(wish.id, remote.id)
+                true
+            }
+            if (success) database.wishDao().markSynced(wish.id)
         }
         Log.d(TAG, "pushPending завершён")
     }

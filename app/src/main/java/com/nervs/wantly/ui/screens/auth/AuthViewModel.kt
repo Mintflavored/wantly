@@ -47,8 +47,8 @@ class AuthViewModel(
                 // syncAfterAuth отправит их на сервер и подтянет серверные ID.
                 // UI не блокируется — если sync упадёт, данные останутся локально.
                 update { copy(isLoading = false, isSuccess = true) }
-                // Фоновый sync
-                syncManager.syncAfterAuth(isRegistration = true)
+                // Sync через application scope — не отменяется при закрытии экрана
+                syncManager.syncAfterAuthScoped(isRegistration = true)
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
             } catch (e: Exception) {
@@ -69,7 +69,7 @@ class AuthViewModel(
                 }
                 // Вход выполнен. Sync в фоне.
                 update { copy(isLoading = false, isSuccess = true) }
-                syncManager.syncAfterAuth(isRegistration = false)
+                syncManager.syncAfterAuthScoped(isRegistration = false)
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка входа") }
             } catch (e: Exception) {
