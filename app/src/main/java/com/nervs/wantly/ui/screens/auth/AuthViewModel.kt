@@ -42,23 +42,13 @@ class AuthViewModel(
                     val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
                     saveSession(r.token, r.userId, r.email, r.displayName)
                 }
-                // Единая точка: миграция + синхронизация.
-                val ok = syncManager.syncAfterAuth(isRegistration = true)
-                if (!ok) {
-                    // Аккаунт создан, но миграция/синхронизация не удалась.
-                    // НЕ очищаем сессию — гость не теряет данные.
-                    // Локальные данные остаются в Room, серверный токен сохранён.
-                    // При следующем запуске syncIfLoggedIn подтянет данные.
-                    update {
-                        copy(
-                            isLoading = false,
-                            error = "Аккаунт создан, но не удалось синхронизировать. Данные сохранятся при следующем входе.",
-                            isSuccess = true, // Всё же входим — аккаунт создан
-                        )
-                    }
-                    return@launch
-                }
+                // Аккаунт создан. Сессия сохранена.
+                // Гостевые данные в Room помечены synced=false.
+                // syncAfterAuth отправит их на сервер и подтянет серверные ID.
+                // UI не блокируется — если sync упадёт, данные останутся локально.
                 update { copy(isLoading = false, isSuccess = true) }
+                // Фоновый sync
+                syncManager.syncAfterAuth(isRegistration = true)
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
             } catch (e: Exception) {
@@ -77,14 +67,9 @@ class AuthViewModel(
                     val r = repository.api.login(st.email.trim(), st.password)
                     saveSession(r.token, r.userId, r.email, r.displayName)
                 }
-                // Синхронизация после входа — без миграции
-                val ok = syncManager.syncAfterAuth(isRegistration = false)
-                if (!ok) {
-                    update { copy(isLoading = false, error = "Не удалось загрузить данные. Проверьте интернет и войдите снова.") }
-                    sessionManager.clearSession()
-                    return@launch
-                }
+                // Вход выполнен. Sync в фоне.
                 update { copy(isLoading = false, isSuccess = true) }
+                syncManager.syncAfterAuth(isRegistration = false)
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка входа") }
             } catch (e: Exception) {

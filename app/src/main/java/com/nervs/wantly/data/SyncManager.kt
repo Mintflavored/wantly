@@ -5,45 +5,49 @@ import androidx.room.withTransaction
 import com.nervs.wantly.data.local.WantlyDatabase
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
-import com.nervs.wantly.data.repository.WishlistRepository
+import com.nervs.wantly.data.remote.WantlyApi
+import com.nervs.wantly.data.remote.dto.CreateWishRequest
+import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Синхронизация: сервер ↔ локальная БД.
+ * Local-first синхронизация.
  *
- * Архитектура: синхронизация запускается только из двух мест —
- * 1. [syncAfterAuth] — после login/register (из AuthViewModel)
- * 2. [syncIfLoggedIn] — при запуске приложения (из WantlyApp)
+ * Принципы:
+ * 1. Room — единственный источник правды для UI. UI всегда читает из Room.
+ * 2. Все записи идут в Room мгновенно с synced=false (dirty).
+ * 3. [pushPending] — отправляет dirty-записи на сервер в фоне.
+ * 4. [pullFromServer] — заменяет Room данными сервера (при запуске/login).
  *
- * Никаких LaunchedEffect(isLoggedIn), skipAutoSync, fullSyncForce —
- * единая точка входа, Mutex против гонок.
+ * Sync запускается из двух мест:
+ * - [syncAfterAuth] — после login/register (из AuthViewModel)
+ * - [syncIfLoggedIn] — при запуске приложения (из WantlyApp)
+ * - [pushPending] — после каждой локальной операции (из Repository)
+ *
+ * Нет гонок: Mutex сериализует все sync-операции.
+ * Нет блокировки UI: pushPending работает в фоне, UI не ждёт.
  */
 class SyncManager(
     private val database: WantlyDatabase,
-    private val repository: WishlistRepository,
+    private val api: WantlyApi,
 ) {
     private val mutex = Mutex()
 
     /**
-     * Синхронизация после авторизации.
-     *
-     * @param isRegistration true при регистрации — мигрирует локальные данные гостя.
-     * @return true при успехе, false при ошибке миграции или синхронизации.
+     * После авторизации: миграция (при регистрации) → pull.
+     * Гостевые данные уже в Room с synced=false → pushPending их отправит.
      */
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
         return mutex.withLock {
             try {
                 if (isRegistration) {
-                    // Мигрируем локальные данные гостя на сервер.
-                    // При ошибке — НЕ продолжаем, возвращаем false.
-                    val migrated = runCatching { repository.migrateLocalToServer() }
-                        .onFailure { Log.e(TAG, "Миграция не удалась", it) }
-                        .isSuccess
-                    if (!migrated) return@withLock false
+                    // Гостевые данные в Room уже помечены synced=false.
+                    // Отправляем на сервер, получаем серверные ID.
+                    pushPendingInternal()
                 }
-                fullSync()
-                Log.d(TAG, "syncAfterAuth завершён успешно")
+                pullInternal()
+                Log.d(TAG, "syncAfterAuth завершён (registration=$isRegistration)")
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "syncAfterAuth не удалась", e)
@@ -52,38 +56,98 @@ class SyncManager(
         }
     }
 
-    /** Флаг: стартовая синхронизация уже была в этой сессии. */
+    /**
+     * Стартовая синхронизация — один раз за сессию.
+     */
     @Volatile
     private var startupSyncDone = false
 
-    /**
-     * Синхронизация при запуске — только если есть сохранённый токен.
-     * Выполняется один раз за сессию приложения.
-     */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
         startupSyncDone = true
         mutex.withLock {
-            runCatching { fullSync() }
-                .onFailure { Log.e(TAG, "Стартовая синхронизация не удалась", it) }
+            runCatching {
+                pushPendingInternal()
+                pullInternal()
+            }.onFailure { Log.e(TAG, "Стартовая синхронизация не удалась", it) }
         }
     }
 
     /**
-     * Полная синхронизация: получить все списки с сервера → заменить Room.
-     *
-     * Сначала загружает все данные в память, потом атомарно заменяет Room.
-     * При ошибке — Room остаётся нетронутым (offline-first).
+     * Фоновая отправка dirty-записей.
+     * Вызывается после каждой локальной операции если залогинен.
      */
-    private suspend fun fullSync() {
-        Log.d(TAG, "Начинаю fullSync...")
-        val remoteLists = repository.api.getWishlists()
+    suspend fun pushPending() {
+        if (!mutex.tryLock()) return // уже идёт sync — не блокируем
+        try {
+            pushPendingInternal()
+        } finally {
+            mutex.unlock()
+        }
+    }
 
-        // Сначала загружаем все детали в память
-        val details = remoteLists.map { repository.api.getWishlistDetail(it.id) }
+    /**
+     * Очистка локальных данных (при выходе).
+     */
+    suspend fun clearLocal() {
+        mutex.withLock {
+            database.withTransaction {
+                database.wishDao().clearAll()
+                database.wishlistDao().clearAll()
+            }
+            Log.d(TAG, "Локальные данные очищены")
+        }
+    }
 
-        // Атомарная замена — только после успешного pull.
-        // Транзакция: при ошибке/cancel rollback, кэш не теряется.
+    // ── Внутренние методы (вызываются под mutex) ──────────
+
+    private suspend fun pushPendingInternal() {
+        // 1. Отправляем удаления
+        for (wish in database.wishDao().getPendingDelete()) {
+            runCatching { api.deleteWish(wish.id) }
+            database.wishDao().deleteById(wish.id)
+        }
+        for (list in database.wishlistDao().getPendingDelete()) {
+            runCatching { api.deleteWishlist(list.id) }
+            database.wishlistDao().deleteById(list.id)
+        }
+
+        // 2. Отправляем новые/изменённые списки
+        for (list in database.wishlistDao().getUnsynced()) {
+            val remote = runCatching {
+                api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
+            }.getOrNull() ?: continue
+            // Обновляем локальный ID на серверный
+            database.wishlistDao().updateServerId(list.id, remote.id)
+        }
+
+        // 3. Отправляем новые/изменённые желания
+        for (wish in database.wishDao().getUnsynced()) {
+            val wishlist = database.wishlistDao().getById(wish.wishlistId) ?: continue
+            val remote = runCatching {
+                api.createWish(
+                    wishlist.id,
+                    CreateWishRequest(
+                        title = wish.title,
+                        description = wish.description,
+                        url = wish.url,
+                        imageUrl = wish.imageUrl,
+                        price = wish.price,
+                        currency = wish.currency,
+                        storeName = wish.storeName,
+                        status = wish.status,
+                    ),
+                )
+            }.getOrNull() ?: continue
+            database.wishDao().updateServerId(wish.id, remote.id)
+        }
+        Log.d(TAG, "pushPending завершён")
+    }
+
+    private suspend fun pullInternal() {
+        val remoteLists = api.getWishlists()
+        val details = remoteLists.map { api.getWishlistDetail(it.id) }
+
         database.withTransaction {
             database.wishlistDao().clearAll()
             database.wishDao().clearAll()
@@ -97,6 +161,7 @@ class SyncManager(
                         description = detail.wishlist.description,
                         coverColor = detail.wishlist.coverColor,
                         createdAt = baseTime - index,
+                        synced = true,
                     ),
                 )
                 detail.wishes.forEachIndexed { wishIndex, wish ->
@@ -113,28 +178,13 @@ class SyncManager(
                             storeName = wish.storeName,
                             status = wish.status,
                             createdAt = baseTime - wishIndex,
+                            synced = true,
                         ),
                     )
                 }
             }
         }
-        Log.d(TAG, "fullSync завершён: ${remoteLists.size} списков")
-    }
-
-    /**
-     * Очистка локальных данных (при выходе из аккаунта).
-     * Берёт mutex чтобы не конфликтовать с идущей синхронизацией.
-     */
-    suspend fun clearLocal() {
-        mutex.withLock {
-            try {
-                database.wishDao().clearAll()
-                database.wishlistDao().clearAll()
-                Log.d(TAG, "Локальные данные очищены")
-            } catch (e: Exception) {
-                Log.e(TAG, "Не удалось очистить локальные данные", e)
-            }
-        }
+        Log.d(TAG, "pull завершён: ${remoteLists.size} списков")
     }
 
     companion object {

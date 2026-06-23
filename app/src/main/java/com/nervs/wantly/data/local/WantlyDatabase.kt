@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -20,13 +22,26 @@ abstract class WantlyDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: WantlyDatabase? = null
 
+        /** Migration 1→2: добавлены synced и pendingDelete колонки. */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun get(context: Context): WantlyDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     WantlyDatabase::class.java,
                     "wantly.db",
-                ).build().also { INSTANCE = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { INSTANCE = it }
             }
     }
 }

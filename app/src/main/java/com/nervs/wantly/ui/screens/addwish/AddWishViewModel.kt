@@ -2,6 +2,9 @@ package com.nervs.wantly.ui.screens.addwish
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.GuestCounter
+import com.nervs.wantly.data.SessionManager
+import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.model.WishDraft
 import com.nervs.wantly.data.remote.LinkPreviewError
 import com.nervs.wantly.data.repository.WishlistRepository
@@ -20,7 +23,6 @@ data class AddWishUiState(
     val storeName: String = "",
     val imageUrl: String = "",
     val isParsing: Boolean = false,
-    val isSaving: Boolean = false,
     val error: LinkPreviewError? = null,
 ) {
     val canSave: Boolean get() = title.isNotBlank()
@@ -29,8 +31,9 @@ data class AddWishUiState(
 class AddWishViewModel(
     private val wishlistId: Long,
     private val repository: WishlistRepository,
-    private val guestCounter: com.nervs.wantly.data.GuestCounter? = null,
-    private val sessionManager: com.nervs.wantly.data.SessionManager? = null,
+    private val guestCounter: GuestCounter? = null,
+    private val sessionManager: SessionManager? = null,
+    private val syncManager: SyncManager? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AddWishUiState())
     val uiState = _uiState.asStateFlow()
@@ -41,7 +44,6 @@ class AddWishViewModel(
     fun onPriceChange(v: String) = update {
         copy(price = v.filter { it.isDigit() || it == '.' || it == ',' || it == ' ' })
     }
-
     fun onCurrencyChange(v: String) = update { copy(currency = v) }
     fun onStoreChange(v: String) = update { copy(storeName = v) }
     fun onImageUrlChange(v: String) = update { copy(imageUrl = v) }
@@ -72,11 +74,8 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
-        if (st.isSaving) return // защита от двойного нажатия
-        update { copy(isSaving = true, error = null) }
         viewModelScope.launch {
-            val loggedIn = sessionManager?.isLoggedIn?.first() ?: false
-            val result = repository.addWish(
+            repository.addWish(
                 wishlistId,
                 WishDraft(
                     title = st.title.trim(),
@@ -87,22 +86,22 @@ class AddWishViewModel(
                     currency = st.currency.ifBlank { "RUB" },
                     storeName = st.storeName.ifBlank { null },
                 ),
-                isLoggedIn = loggedIn,
             )
-            if (result != null) {
-                guestCounter?.incrementWish()
-                onDone()
-            } else {
-                // Сервер недоступен — форма остаётся открытой, данные не потеряны
-                update { copy(isSaving = false, error = com.nervs.wantly.data.remote.LinkPreviewError.LOAD_FAILED) }
-            }
+            guestCounter?.incrementWish()
+            syncManager?.pushPending()
+            onDone()
+        }
+    }
+
+    private fun numberForField(value: Double): String {
+        return if (value == value.toLong().toDouble()) {
+            value.toLong().toString()
+        } else {
+            value.toString()
         }
     }
 
     private inline fun update(transform: AddWishUiState.() -> AddWishUiState) {
         _uiState.update(transform)
     }
-
-    private fun numberForField(v: Double): String =
-        if (v % 1.0 == 0.0) "%.0f".format(v) else "%.2f".format(v)
 }

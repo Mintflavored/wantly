@@ -61,7 +61,7 @@ import com.nervs.wantly.ui.theme.WishlistAccents
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(onWishlistClick: (Long) -> Unit) {
-    val vm: HomeViewModel = rememberAppViewModel { HomeViewModel(it.repository, it.sessionManager) }
+    val vm: HomeViewModel = rememberAppViewModel { HomeViewModel(it.repository, it.syncManager) }
     val wishlists by vm.wishlists.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var wishlistToDelete by remember { mutableStateOf<WishlistEntity?>(null) }

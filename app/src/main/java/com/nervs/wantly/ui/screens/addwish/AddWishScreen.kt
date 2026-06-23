@@ -54,7 +54,7 @@ fun AddWishScreen(
     onBack: () -> Unit,
 ) {
     val vm: AddWishViewModel = rememberAppViewModel {
-        AddWishViewModel(wishlistId, it.repository, it.guestCounter, it.sessionManager)
+        AddWishViewModel(wishlistId, it.repository, it.guestCounter, it.sessionManager, it.syncManager)
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current

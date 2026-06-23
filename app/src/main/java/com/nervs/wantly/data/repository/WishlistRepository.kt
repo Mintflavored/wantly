@@ -1,5 +1,6 @@
 package com.nervs.wantly.data.repository
 
+import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.local.WishlistDao
 import com.nervs.wantly.data.local.WishlistWithCount
 import com.nervs.wantly.data.local.WishDao
@@ -10,122 +11,62 @@ import com.nervs.wantly.data.model.WishStatus
 import com.nervs.wantly.data.remote.LinkPreview
 import com.nervs.wantly.data.remote.LinkPreviewService
 import com.nervs.wantly.data.remote.WantlyApi
-import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
-import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 
+/**
+ * Local-first репозиторий.
+ *
+ * Все операции пишут в Room мгновенно с synced=false.
+ * SyncManager.pushPending() отправляет dirty-записи в фоне.
+ * Нет блокировки UI на сеть.
+ */
 class WishlistRepository(
     private val wishlistDao: WishlistDao,
     private val wishDao: WishDao,
     private val linkPreviewService: LinkPreviewService,
     val api: WantlyApi,
+    private val sessionManager: SessionManager,
 ) {
     fun observeWishlists(): Flow<List<WishlistWithCount>> = wishlistDao.observeAllWithCount()
     fun observeWishlist(id: Long): Flow<WishlistEntity?> = wishlistDao.observeById(id)
     fun observeWishes(wishlistId: Long): Flow<List<WishEntity>> = wishDao.observeByWishlist(wishlistId)
 
-    /**
-     * Создание списка.
-     * - Залогинен: server-first (создаём на сервере → Room с server ID).
-     * - Гость: только Room (локальный ID).
-     */
-    suspend fun createWishlist(title: String, description: String?, coverColor: Int, isLoggedIn: Boolean): Long? =
-        if (isLoggedIn) {
-            val remote = runCatching { api.createWishlist(CreateWishlistRequest(title, description, coverColor)) }
-                .getOrNull() ?: return null
-            wishlistDao.insertWithId(
-                WishlistEntity(
-                    id = remote.id,
-                    title = remote.title,
-                    description = remote.description,
-                    coverColor = remote.coverColor,
-                    createdAt = System.currentTimeMillis(),
-                ),
-            )
-            remote.id
-        } else {
-            wishlistDao.insert(WishlistEntity(title = title, description = description, coverColor = coverColor))
-        }
+    suspend fun createWishlist(title: String, description: String?, coverColor: Int): Long =
+        wishlistDao.insert(
+            WishlistEntity(
+                title = title,
+                description = description,
+                coverColor = coverColor,
+                synced = false,
+            ),
+        )
 
-    suspend fun deleteWishlist(wishlist: WishlistEntity, isLoggedIn: Boolean): Boolean {
-        if (isLoggedIn) {
-            val ok = runCatching { api.deleteWishlist(wishlist.id) }.isSuccess
-            if (!ok) return false // сервер недоступен — не удаляем локально
-        }
-        wishlistDao.delete(wishlist)
-        return true
+    suspend fun deleteWishlist(wishlist: WishlistEntity) {
+        wishlistDao.markDeleted(wishlist.id)
     }
 
-    /**
-     * Добавление желания.
-     * - Залогинен: server-first.
-     * - Гость: только Room.
-     */
-    suspend fun addWish(wishlistId: Long, draft: WishDraft, isLoggedIn: Boolean): Long? =
-        if (isLoggedIn) {
-            val remote = runCatching {
-                api.createWish(
-                    wishlistId,
-                    CreateWishRequest(
-                        title = draft.title,
-                        description = draft.description,
-                        url = draft.url,
-                        imageUrl = draft.imageUrl,
-                        price = draft.price,
-                        currency = draft.currency,
-                        storeName = draft.storeName,
-                        status = draft.status.name,
-                    ),
-                )
-            }.getOrNull() ?: return null
-            wishDao.insertWithId(
-                WishEntity(
-                    id = remote.id,
-                    wishlistId = remote.wishlistId,
-                    title = remote.title,
-                    description = remote.description,
-                    url = remote.url,
-                    imageUrl = remote.imageUrl,
-                    price = remote.price,
-                    currency = remote.currency,
-                    storeName = remote.storeName,
-                    status = remote.status,
-                ),
-            )
-            remote.id
-        } else {
-            wishDao.insert(
-                WishEntity(
-                    wishlistId = wishlistId,
-                    title = draft.title,
-                    description = draft.description,
-                    url = draft.url,
-                    imageUrl = draft.imageUrl,
-                    price = draft.price,
-                    currency = draft.currency,
-                    storeName = draft.storeName,
-                    status = draft.status.name,
-                ),
-            )
-        }
+    suspend fun addWish(wishlistId: Long, draft: WishDraft): Long =
+        wishDao.insert(
+            WishEntity(
+                wishlistId = wishlistId,
+                title = draft.title,
+                description = draft.description,
+                url = draft.url,
+                imageUrl = draft.imageUrl,
+                price = draft.price,
+                currency = draft.currency,
+                storeName = draft.storeName,
+                status = draft.status.name,
+                synced = false,
+            ),
+        )
 
-    suspend fun updateWishStatus(wish: WishEntity, status: WishStatus, isLoggedIn: Boolean): Boolean {
-        if (isLoggedIn) {
-            val ok = runCatching { api.updateWishStatus(wish.id, status.name) }.isSuccess
-            if (!ok) return false
-        }
+    suspend fun updateWishStatus(wish: WishEntity, status: WishStatus) {
         wishDao.updateStatus(wish.id, status.name)
-        return true
     }
 
-    suspend fun deleteWish(wish: WishEntity, isLoggedIn: Boolean): Boolean {
-        if (isLoggedIn) {
-            val ok = runCatching { api.deleteWish(wish.id) }.isSuccess
-            if (!ok) return false
-        }
-        wishDao.delete(wish)
-        return true
+    suspend fun deleteWish(wish: WishEntity) {
+        wishDao.markDeleted(wish.id)
     }
 
     suspend fun previewLink(url: String, isLoggedIn: Boolean): LinkPreview =
@@ -151,33 +92,8 @@ class WishlistRepository(
             linkPreviewService.fetch(url)
         }
 
-    /** Миграция локальных данных гостя на сервер после регистрации. */
+    /** Больше не нужна — миграция через pushPending при syncAfterAuth. */
     suspend fun migrateLocalToServer() {
-        val lists = wishlistDao.observeAllWithCount().first()
-        for (item in lists) {
-            val remoteList = api.createWishlist(
-                CreateWishlistRequest(
-                    title = item.wishlist.title,
-                    description = item.wishlist.description,
-                    coverColor = item.wishlist.coverColor,
-                ),
-            )
-            val wishes = wishDao.observeByWishlist(item.wishlist.id).first()
-            for (wish in wishes) {
-                api.createWish(
-                    remoteList.id,
-                    CreateWishRequest(
-                        title = wish.title,
-                        description = wish.description,
-                        url = wish.url,
-                        imageUrl = wish.imageUrl,
-                        price = wish.price,
-                        currency = wish.currency,
-                        storeName = wish.storeName,
-                        status = wish.status,
-                    ),
-                )
-            }
-        }
+        // Серверные данные придут через pull после pushPending.
     }
 }
