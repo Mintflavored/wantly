@@ -73,6 +73,11 @@ class SyncManager(
     @Volatile
     private var pushPendingScheduled = false
 
+    /** Push через application scope — не отменяется при popBackStack. */
+    fun pushPendingScoped() {
+        appScope.launch { pushPending() }
+    }
+
     suspend fun pushPending() {
         if (!mutex.tryLock()) {
             // Sync идёт — планируем повтор
