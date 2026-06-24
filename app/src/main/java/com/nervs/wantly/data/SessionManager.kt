@@ -51,4 +51,7 @@ class SessionManager(private val context: Context) {
             context.dataStore.data.first()[Keys.TOKEN]
         }
     }.getOrNull()
+
+    /** Синхронная проверка залогинен ли пользователь (для миграции БД). */
+    fun isLoggedInBlocking(): Boolean = tokenBlocking() != null
 }

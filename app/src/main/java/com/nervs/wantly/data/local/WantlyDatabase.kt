@@ -23,17 +23,28 @@ abstract class WantlyDatabase : RoomDatabase() {
         private var INSTANCE: WantlyDatabase? = null
 
         /**
+         * Контекст для миграции: залогинен ли пользователь на момент v1→v2.
+         * Устанавливается из AppContainer до открытия БД.
+         */
+        @Volatile
+        @JvmStatic
+        var migrationLoggedIn: Boolean = false
+
+        /**
          * Migration 1→2: добавлены serverId, synced, pendingDelete.
-         * synced=0 (DEFAULT) — старые гостевые данные помечаются dirty,
-         * чтобы синхронизироваться при первом входе.
+         * synced зависит от состояния:
+         * - Залогинен → synced=1 (данные уже на сервере из v1 server-first)
+         * - Гость → synced=0 (dirty, синхронизируется при регистрации)
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
+                val syncedDefault = if (migrationLoggedIn) 1 else 0
+
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER")
-                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT $syncedDefault")
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER")
-                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT $syncedDefault")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
             }
         }

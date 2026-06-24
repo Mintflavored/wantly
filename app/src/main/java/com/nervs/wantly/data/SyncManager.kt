@@ -242,6 +242,7 @@ class SyncManager(
                 database.wishDao().insertWithId(wish.copy(
                     synced = false,
                     wishlistId = remappedWishlistId,
+                    id = wish.serverId ?: wish.id, // #48: сохраняем serverId как PK
                 ))
             }
             for (list in tombstoneWishlists) {
@@ -251,7 +252,10 @@ class SyncManager(
             }
             for (wish in tombstoneWishes) {
                 val remappedWishlistId = wishlistIdMap[wish.wishlistId] ?: wish.wishlistId
-                database.wishDao().insertWithId(wish.copy(wishlistId = remappedWishlistId))
+                database.wishDao().insertWithId(wish.copy(
+                    wishlistId = remappedWishlistId,
+                    id = wish.serverId ?: wish.id, // #49: сохраняем serverId как PK
+                ))
             }
         }
         Log.d(TAG, "pull завершён: ${remoteLists.size} списков")
