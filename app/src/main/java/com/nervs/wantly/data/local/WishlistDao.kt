@@ -24,6 +24,9 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE id = :id AND pendingDelete = 0")
     fun observeById(id: Long): Flow<WishlistEntity?>
 
+    @Query("SELECT * FROM wishlists WHERE pendingDelete = 0")
+    suspend fun getAll(): List<WishlistEntity>
+
     @Query("SELECT * FROM wishlists WHERE id = :id AND pendingDelete = 0")
     suspend fun getById(id: Long): WishlistEntity?
 
