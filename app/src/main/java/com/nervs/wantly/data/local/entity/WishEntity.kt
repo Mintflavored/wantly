@@ -1,5 +1,6 @@
 package com.nervs.wantly.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -33,9 +34,9 @@ data class WishEntity(
     val sortOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     /** Серверный ID. null = не отправлено на сервер. */
-    val serverId: Long? = null,
+    @ColumnInfo(name = "serverId") val serverId: Long? = null,
     /** false = локальное изменение, не отправленное на сервер. */
-    val synced: Boolean = true,
+    @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = true,
     /** true = удалено локально, нужно отправить DELETE на сервер. */
-    val pendingDelete: Boolean = false,
+    @ColumnInfo(name = "pendingDelete", defaultValue = "0") val pendingDelete: Boolean = false,
 )

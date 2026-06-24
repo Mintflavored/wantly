@@ -88,8 +88,8 @@ class AddWishViewModel(
                 ),
             )
             guestCounter?.incrementWish()
-            syncManager?.pushPending()
-            onDone()
+            onDone() // Навигация сразу — UI не ждёт сеть
+            syncManager?.pushPending() // Фоновая синхронизация
         }
     }
 
