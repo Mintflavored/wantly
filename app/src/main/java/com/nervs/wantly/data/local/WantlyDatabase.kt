@@ -37,12 +37,19 @@ abstract class WantlyDatabase : RoomDatabase() {
          *
          * v1 НЕ имела server CRUD — локальный PK ≠ серверный ID.
          * v1 register() вызывала migrateLocalToServer(), которая POSTила данные
-         * на сервер, но Room строки не очищала. Поэтому мы не можем отличить
-         * «данные уже на сервере» от «локальные guest-данные».
+         * на сервер, но Room строки не очищала.
          *
-         * Решение: очистить Room для ВСЕХ пользователей.
-         * - Залогинен → pull при запуске восстановит данные с сервера.
-         * - Гость → начинает с чистого листа (v1 logout тоже не чистил таблицы).
+         * Стратегия по состоянию входа:
+         * - Залогинен → DELETE (данные на сервере через migrateLocalToServer,
+         *   pull восстановит). Без DELETE → startup sync POSTит дубликаты.
+         * - Гость → KEEP serverId=NULL, synced=0 (гостевые данные сохраняются,
+         *   отправятся на сервер при регистрации).
+         *
+         * Уязвимое место: v1 logout не чистил Room → stale данные залогиненного
+         * становятся неотличимы от guest-данных. Но это Edge case:
+         * пользователь должен был залогиниться, добавить данные, выйти,
+         * затем обновиться. Потеря этих данных менее критична, чем потеря
+         * настоящих guest-данных при безусловном DELETE.
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -53,8 +60,10 @@ abstract class WantlyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
 
-                db.execSQL("DELETE FROM wishes")
-                db.execSQL("DELETE FROM wishlists")
+                if (migrationLoggedIn) {
+                    db.execSQL("DELETE FROM wishes")
+                    db.execSQL("DELETE FROM wishlists")
+                }
             }
         }
 
