@@ -168,7 +168,9 @@ class SyncManager(
             } else {
                 // Существующая — PATCH статуса
                 if (runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }.isSuccess) {
-                    wishDao.markSynced(wish.id)
+                    // Условный markSynced: только если статус не изменился и нет tombstone.
+                    // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
+                    wishDao.markSyncedIfUnchanged(wish.id, wish.status)
                 }
             }
         }

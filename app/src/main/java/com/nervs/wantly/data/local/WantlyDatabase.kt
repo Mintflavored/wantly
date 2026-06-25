@@ -51,8 +51,11 @@ abstract class WantlyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
 
                 if (migrationLoggedIn) {
-                    db.execSQL("UPDATE wishlists SET synced = 1")
-                    db.execSQL("UPDATE wishes SET synced = 1")
+                    // В v1 (server-first) локальный id = серверный ID.
+                    // Восстанавливаем serverId из id, чтобы pushPending/pull
+                    // корректно работали с этими строками.
+                    db.execSQL("UPDATE wishlists SET serverId = id, synced = 1")
+                    db.execSQL("UPDATE wishes SET serverId = id, synced = 1")
                 }
             }
         }
