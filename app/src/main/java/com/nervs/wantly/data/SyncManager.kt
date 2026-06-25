@@ -207,6 +207,15 @@ class SyncManager(
                 if (list.serverId != null) wishlistIdMap[list.id] = list.serverId
             }
 
+            // v1-migrated detection: серверные titles (lowercase, trimmed).
+            // Локальные списки без serverId с совпадающим title — уже были
+            // отправлены через старый migrateLocalToServer в v1. При
+            // восстановлении пропускаются (как и их wishes), чтобы push
+            // не плодил дубли после pull.
+            val serverListTitles = remoteLists
+                .map { it.title.trim().lowercase() }
+                .toHashSet()
+
             database.wishlistDao().clearAll()
             database.wishDao().clearAll()
 
@@ -260,6 +269,9 @@ class SyncManager(
                         id = list.serverId,
                     ))
                 } else {
+                    // v1-migrated дубль (title уже есть на сервере) — пропускаем,
+                    // серверная копия вставлена выше, push не будет POSTить.
+                    if (list.title.trim().lowercase() in serverListTitles) continue
                     // Локальная запись (POST не удался) — свежий ID
                     val newId = database.wishlistDao().insert(list.copy(id = 0, synced = false))
                     wishlistIdRemap[list.id] = newId
@@ -268,7 +280,9 @@ class SyncManager(
             for (wish in dirtyWishes) {
                 val remappedWishlistId = wishlistIdMap[wish.wishlistId]
                     ?: wishlistIdRemap[wish.wishlistId]
-                    ?: wish.wishlistId
+                // Родительский wishlist не восстановлен (v1-migrated дубль
+                // или удалён) — wish тоже дубликат серверного, пропускаем.
+                if (remappedWishlistId == null) continue
                 if (wish.serverId != null) {
                     database.wishDao().insertWithId(wish.copy(
                         synced = false,
