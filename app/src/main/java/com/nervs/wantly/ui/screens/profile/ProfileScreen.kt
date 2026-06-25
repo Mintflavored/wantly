@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nervs.wantly.R
 import com.nervs.wantly.WantlyApp
+import com.nervs.wantly.data.LogoutSyncOutcome
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 
@@ -93,19 +94,24 @@ fun ProfileScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
-                            // Verified flush: если остались unsynced rows
-                            // (API offline / token expired) — НЕ очищаем локальные
-                            // данные, иначе они потеряются безвозвратно.
-                            val flushed = app.container.syncManager.pushPendingVerified()
-                            if (flushed) {
-                                // clearSession + clearLocal под одним mutex —
-                                // queued sync не успеет вернуть данные в Room
-                                // между очисткой и стиранием токена.
-                                app.container.syncManager.clearLocalUnder {
+                            // Verified flush: различаем три исхода.
+                            when (app.container.syncManager.pushPendingVerifiedForLogout()) {
+                                LogoutSyncOutcome.SUCCESS -> {
+                                    // Все dirty данные ушли — чистим Room и сессию атомарно.
+                                    app.container.syncManager.clearLocalUnder {
+                                        app.container.sessionManager.clearSession()
+                                    }
+                                }
+                                LogoutSyncOutcome.AUTH_EXPIRED -> {
+                                    // JWT истёк, push не может отправить. Чистим только
+                                    // сессию — Room оставляем, данные уйдут после re-login.
+                                    // isLoggedIn сразу становится false → юзер на auth screen.
                                     app.container.sessionManager.clearSession()
                                 }
-                            } else {
-                                showLogoutError = true
+                                LogoutSyncOutcome.TRANSIENT_FAILURE -> {
+                                    // Сетевая/серверная ошибка — не вытираем, иначе data loss.
+                                    showLogoutError = true
+                                }
                             }
                         }
                     },

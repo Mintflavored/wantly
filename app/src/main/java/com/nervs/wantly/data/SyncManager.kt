@@ -24,6 +24,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  * serverId = null → локальная запись, не отправлена на сервер.
  * serverId != null → серверная запись, можно PATCH/DELETE.
  */
+
+/** Результат pushPendingVerifiedForLogout — определяет поведение logout. */
+enum class LogoutSyncOutcome {
+    /** Все dirty rows отправлены, можно вытирать Room. */
+    SUCCESS,
+
+    /** 401 от сервера (JWT истёк). Сессию чистить, Room НЕ трогать —
+     *  данные уйдут после повторного входа. */
+    AUTH_EXPIRED,
+
+    /** Сетевая/серверная ошибка. Блокировать logout. */
+    TRANSIENT_FAILURE,
+}
+
 class SyncManager(
     private val database: WantlyDatabase,
     private val api: WantlyApi,
@@ -100,16 +114,25 @@ class SyncManager(
     }
 
     /**
-     * Push + verification. Возвращает false если остались unsynced rows
-     * или tombstones — локальные данные нельзя безопасно удалить.
-     * Используется перед logout/clearLocal.
+     * Push + verification для logout. Различает:
+     * - SUCCESS — всё отправлено, можно вытирать локальные данные
+     * - AUTH_EXPIRED — 401 от сервера (JWT истёк). Сессию чистить, Room НЕ трогать
+     *   — данные уйдут после повторного входа.
+     * - TRANSIENT_FAILURE — network/server error. Блокировать logout,
+     *   иначе данные потеряются.
      */
-    suspend fun pushPendingVerified(): Boolean {
+    suspend fun pushPendingVerifiedForLogout(): LogoutSyncOutcome {
+        lastSyncSaw401 = false
         pushPending()
-        return database.wishlistDao().getUnsynced().isEmpty() &&
-            database.wishDao().getUnsynced().isEmpty() &&
-            database.wishlistDao().getPendingDelete().isEmpty() &&
-            database.wishDao().getPendingDelete().isEmpty()
+        val stillDirty = database.wishlistDao().getUnsynced().isNotEmpty() ||
+            database.wishDao().getUnsynced().isNotEmpty() ||
+            database.wishlistDao().getPendingDelete().isNotEmpty() ||
+            database.wishDao().getPendingDelete().isNotEmpty()
+        return when {
+            !stillDirty -> LogoutSyncOutcome.SUCCESS
+            lastSyncSaw401 -> LogoutSyncOutcome.AUTH_EXPIRED
+            else -> LogoutSyncOutcome.TRANSIENT_FAILURE
+        }
     }
 
     suspend fun pushPending() {
@@ -181,9 +204,31 @@ class SyncManager(
     private suspend fun isDeletedOrGone(block: suspend () -> Unit): Boolean = try {
         block(); true
     } catch (e: ApiException) {
+        if (e.code == 401) lastSyncSaw401 = true
         e.code == 404
     } catch (e: Exception) {
         false
+    }
+
+    /**
+     * Флаг: последний push встретил 401. Используется logout-путём,
+     * чтобы отличать «настоящая network/server ошибка» от «истёк JWT».
+     * Сбрасывается в начале pushPendingVerifiedForLogout.
+     */
+    @Volatile
+    private var lastSyncSaw401: Boolean = false
+
+    /** Test-only: был ли 401 в последнем push. */
+    internal fun lastSyncSawAuthFailureForTest(): Boolean = lastSyncSaw401
+
+    /** API-вызов с отловом 401 → выставляет флаг, возвращает null при любой ошибке. */
+    private suspend fun <T> apiCall(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: ApiException) {
+        if (e.code == 401) lastSyncSaw401 = true
+        null
+    } catch (e: Exception) {
+        null
     }
 
     private suspend fun pushPendingInternal() {
@@ -210,9 +255,9 @@ class SyncManager(
         for (list in listDao.getUnsynced()) {
             if (list.serverId == null) {
                 // Новая — POST
-                val remote = runCatching {
+                val remote = apiCall {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
-                }.getOrNull() ?: continue
+                } ?: continue
                 // serverId сохраняется ВСЕГДА; synced — только если нет pendingDelete.
                 // Даже если список удалён во время POST, мы знаем serverId для DELETE.
                 listDao.setServerIdPreservingDirty(list.id, remote.id)
@@ -226,7 +271,7 @@ class SyncManager(
             val wishlistServerId = wishlist.serverId ?: continue // список ещё не отправлен
             if (wish.serverId == null) {
                 // Новая — POST
-                val remote = runCatching {
+                val remote = apiCall {
                     api.createWish(
                         wishlistServerId,
                         CreateWishRequest(
@@ -240,7 +285,7 @@ class SyncManager(
                             status = wish.status,
                         ),
                     )
-                }.getOrNull() ?: continue
+                } ?: continue
                 // serverId сохраняется ВСЕГДА; synced — только если статус не изменился
                 // и нет pendingDelete. Если статус изменился — следующий push PATCHит.
                 // Если удалён — следующий push DELETE по serverId.
@@ -254,11 +299,14 @@ class SyncManager(
                     wishDao.markSyncedIfUnchanged(wish.id, wish.status)
                 } else {
                     val err = patchResult.exceptionOrNull()
-                    if (err is ApiException && err.code == 404) {
-                        // Wish удалён на сервере (другой клиент). Без отсоединения
-                        // serverId следующий push снова получит 404 и зависнет.
-                        // Сбрасываем → следующий push POSTит под текущим parent.
-                        wishDao.update(wish.copy(serverId = null, synced = false))
+                    if (err is ApiException) when (err.code) {
+                        401 -> lastSyncSaw401 = true
+                        404 -> {
+                            // Wish удалён на сервере (другой клиент). Без отсоединения
+                            // serverId следующий push снова получит 404 и зависнет.
+                            // Сбрасываем → следующий push POSTит под текущим parent.
+                            wishDao.update(wish.copy(serverId = null, synced = false))
+                        }
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }

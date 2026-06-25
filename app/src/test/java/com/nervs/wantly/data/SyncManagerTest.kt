@@ -89,22 +89,21 @@ class SyncManagerTest {
         assertThat(fakeApi.wishIds()).hasSize(1)
     }
 
-    // ── pushPendingVerified: блокировка logout при unsynced ──────────
+    // ── pushPendingVerifiedForLogout: различение исходов logout ──────
+    // (баг #20 — expired JWT блокировал logout)
 
     @Test
-    fun `pushPendingVerified returns true when all rows synced`() = runTest {
+    fun `logout flush returns SUCCESS when all rows synced`() = runTest {
         db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
 
-        val ok = sync.pushPendingVerified()
+        val outcome = sync.pushPendingVerifiedForLogout()
 
-        assertThat(ok).isTrue()
+        assertThat(outcome).isEqualTo(LogoutSyncOutcome.SUCCESS)
         assertThat(db.wishlistDao().getUnsynced()).isEmpty()
-        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
     }
 
     @Test
-    fun `pushPendingVerified returns false when API keeps failing`() = runTest {
-        // Подменяем api на падающий при createWishlist
+    fun `logout flush returns TRANSIENT_FAILURE on network error`() = runTest {
         val brokenApi = mockk<WantlyApi>(relaxed = true) {
             coEvery { createWishlist(any()) } throws RuntimeException("network down")
         }
@@ -112,9 +111,25 @@ class SyncManagerTest {
 
         db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
 
-        val ok = brokenSync.pushPendingVerified()
+        val outcome = brokenSync.pushPendingVerifiedForLogout()
 
-        assertThat(ok).isFalse()
+        assertThat(outcome).isEqualTo(LogoutSyncOutcome.TRANSIENT_FAILURE)
+        assertThat(db.wishlistDao().getUnsynced()).hasSize(1)
+    }
+
+    @Test
+    fun `logout flush returns AUTH_EXPIRED on 401`() = runTest {
+        val expiredApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { createWishlist(any()) } throws com.nervs.wantly.data.remote.ApiException(401, "expired")
+        }
+        val expiredSync = SyncManager(db, expiredApi)
+
+        db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
+
+        val outcome = expiredSync.pushPendingVerifiedForLogout()
+
+        // 401 = JWT истёк — Room НЕ вытирать, данные уйдут после re-login
+        assertThat(outcome).isEqualTo(LogoutSyncOutcome.AUTH_EXPIRED)
         assertThat(db.wishlistDao().getUnsynced()).hasSize(1)
     }
 
