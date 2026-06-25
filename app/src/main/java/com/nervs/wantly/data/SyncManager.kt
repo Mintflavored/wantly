@@ -55,20 +55,27 @@ class SyncManager(
         }
     }
 
-    /** Стартовая синхронизация — один раз. */
+    /** Стартовая синхронизация — один раз, и только при успехе. */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
-        startupSyncDone = true
-        mutex.withLock {
-            // Pull ПЕРЕД push: UPSERT обновляет существующие локальные записи
-            // по serverId до того, как push начнёт POSTить. Для v1-migrated
-            // строк (serverId=null) это не критично — UPSERT их не трогает,
-            // push отправит. Возможные дубли для v1-юзеров с уже-отправленными-
-            // через-migrateLocalToServer данными принят как known limitation.
-            runCatching { pullInternal() }
+        // Pull ПЕРЕД push: UPSERT обновляет существующие локальные записи
+        // по serverId до того, как push начнёт POSTить. Для v1-migrated
+        // строк (serverId=null) это не критично — UPSERT их не трогает,
+        // push отправит. Возможные дубли для v1-юзеров с уже-отправленными-
+        // через-migrateLocalToServer данными принят как known limitation.
+        val ok = mutex.withLock {
+            val pullOk = runCatching { pullInternal() }
                 .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
-            runCatching { pushAndDrain() }
+                .isSuccess
+            val pushOk = runCatching { pushAndDrain() }
                 .onFailure { Log.e(TAG, "Стартовый push не удался", it) }
+                .isSuccess
+            pullOk && pushOk
+        }
+        if (ok) {
+            startupSyncDone = true
+        } else {
+            Log.e(TAG, "Стартовый sync не удался — будет ретрай при следующем вызове")
         }
     }
 
@@ -264,15 +271,16 @@ class SyncManager(
 
             // === 2. Удалить локальные серверные wishlists, отсутствующие на сервере.
             //     Пропускаем tombstone (push отправит DELETE), dirty (push отправит
-            //     изменения) и списки с unsynced wishes (cascade по FK вытер бы их —
-            //     local-first data loss). Конфликт разрешится на следующем pull
-            //     после успешного push.
+            //     изменения) и списки с dirty/tombstoned/new children (cascade по FK
+            //     вытер бы их — local-first data loss). Конфликт разрешится на
+            //     следующем pull после успешного push.
             for (list in wishlistDao.getAll()) {
                 val sid = list.serverId ?: continue
                 if (sid in remoteListIds || list.pendingDelete || !list.synced) continue
-                val hasUnsyncedChildren = wishDao.getAll()
-                    .any { it.wishlistId == list.id && it.serverId == null }
-                if (!hasUnsyncedChildren) {
+                val hasDirtyChildren = wishDao.getAll().any {
+                    it.wishlistId == list.id && (!it.synced || it.pendingDelete)
+                }
+                if (!hasDirtyChildren) {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
                 }
             }
