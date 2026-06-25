@@ -156,6 +156,22 @@ class SyncManager(
         }
     }
 
+    /**
+     * Запустить block и очистить локальные данные под одним mutex — атомарно.
+     * Гарантирует, что queued sync, дождавшийся mutex, не успеет записать
+     * данные обратно между очисткой Room и очисткой session.
+     */
+    suspend fun clearLocalUnder(block: suspend () -> Unit) {
+        mutex.withLock {
+            block()
+            database.withTransaction {
+                database.wishDao().clearAll()
+                database.wishlistDao().clearAll()
+            }
+            Log.d(TAG, "Локальные данные и сессия очищены")
+        }
+    }
+
     // ── Внутренние (под mutex) ────────────────────────────
 
     /** Успех или 404 — сервер уже не содержит запись, желаемое состояние достигнуто. */
@@ -288,10 +304,15 @@ class SyncManager(
                 }
                 if (hasDirtyChildren) {
                     // Parent удалён на сервере, но есть локальные изменения.
-                    // Отсоединяем serverId и помечаем несинхронизированным —
-                    // push пересоздаст список и привяжет children к новому id,
-                    // иначе push получал бы 404 и children зависали навсегда.
+                    // Отсоединяем serverId у parent и children — push пересоздаст
+                    // родительский список и воссоздаст/удалит детей под новым id,
+                    // иначе PATCH/DELETE падал бы с 404 и дети зависали навсегда.
                     wishlistDao.update(list.copy(serverId = null, synced = false))
+                    for (wish in wishDao.getAll().filter {
+                        it.wishlistId == list.id && it.serverId != null
+                    }) {
+                        wishDao.update(wish.copy(serverId = null))
+                    }
                 } else {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
                 }

@@ -98,8 +98,12 @@ fun ProfileScreen(
                             // данные, иначе они потеряются безвозвратно.
                             val flushed = app.container.syncManager.pushPendingVerified()
                             if (flushed) {
-                                app.container.syncManager.clearLocal()
-                                app.container.sessionManager.clearSession()
+                                // clearSession + clearLocal под одним mutex —
+                                // queued sync не успеет вернуть данные в Room
+                                // между очисткой и стиранием токена.
+                                app.container.syncManager.clearLocalUnder {
+                                    app.container.sessionManager.clearSession()
+                                }
                             } else {
                                 showLogoutError = true
                             }
