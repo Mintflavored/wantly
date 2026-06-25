@@ -17,6 +17,12 @@ interface WishDao {
     @Query("SELECT * FROM wishes WHERE id = :id AND pendingDelete = 0")
     suspend fun getById(id: Long): WishEntity?
 
+    @Query("SELECT * FROM wishes")
+    suspend fun getAll(): List<WishEntity>
+
+    @Query("SELECT * FROM wishes WHERE serverId = :serverId LIMIT 1")
+    suspend fun getByServerId(serverId: Long): WishEntity?
+
     @Insert
     suspend fun insert(wish: WishEntity): Long
 

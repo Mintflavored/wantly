@@ -30,6 +30,9 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE id = :id AND pendingDelete = 0")
     suspend fun getById(id: Long): WishlistEntity?
 
+    @Query("SELECT * FROM wishlists WHERE serverId = :serverId LIMIT 1")
+    suspend fun getByServerId(serverId: Long): WishlistEntity?
+
     @Insert
     suspend fun insert(wishlist: WishlistEntity): Long
 
