@@ -75,6 +75,9 @@ fun ProfileScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
+                            // Сначала flush несинхронизированных локальных изменений,
+                            // иначе clearLocal() потеряет их безвозвратно.
+                            app.container.syncManager.pushPending()
                             app.container.syncManager.clearLocal()
                             app.container.sessionManager.clearSession()
                         }

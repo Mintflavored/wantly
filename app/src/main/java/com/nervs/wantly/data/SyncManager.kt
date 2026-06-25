@@ -43,8 +43,8 @@ class SyncManager(
             try {
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
-                // Drain: если за время sync были локальные изменения — отправляем
-                drainScheduledPush()
+                // Drain cycle: ловит dirty changes сделанные во время pull
+                pushAndDrain()
                 Log.d(TAG, "syncAfterAuth завершён (registration=$isRegistration)")
                 true
             } catch (e: Exception) {
@@ -66,10 +66,8 @@ class SyncManager(
             // через-migrateLocalToServer данными принят как known limitation.
             runCatching { pullInternal() }
                 .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
-            runCatching { pushPendingInternal() }
+            runCatching { pushAndDrain() }
                 .onFailure { Log.e(TAG, "Стартовый push не удался", it) }
-            runCatching { drainScheduledPush() }
-                .onFailure { Log.e(TAG, "Стартовый drain не удался", it) }
         }
     }
 
@@ -106,10 +104,17 @@ class SyncManager(
         }
     }
 
-    /** Отправляем накопленные dirty-записи если был запланирован повтор. */
-    private suspend fun drainScheduledPush() {
-        if (pushPendingScheduled.compareAndSet(true, false)) {
+    /**
+     * Push + drain cycle ВНУТРИ уже захваченного mutex. Повторяет push пока
+     * флаг scheduled не стабилизируется false — ловит dirty changes, сделанные
+     * параллельно во время push. Только для вызова из mutex.withLock блока
+     * (syncAfterAuth/syncIfLoggedIn), не reentrant — pushPending использует
+     * tryLock и не может вызываться изнутри.
+     */
+    private suspend fun pushAndDrain() {
+        while (true) {
             pushPendingInternal()
+            if (!pushPendingScheduled.compareAndSet(true, false)) return
         }
     }
 
