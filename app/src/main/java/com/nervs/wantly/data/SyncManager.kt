@@ -82,6 +82,19 @@ class SyncManager(
         appScope.launch { pushPending() }
     }
 
+    /**
+     * Push + verification. Возвращает false если остались unsynced rows
+     * или tombstones — локальные данные нельзя безопасно удалить.
+     * Используется перед logout/clearLocal.
+     */
+    suspend fun pushPendingVerified(): Boolean {
+        pushPending()
+        return database.wishlistDao().getUnsynced().isEmpty() &&
+            database.wishDao().getUnsynced().isEmpty() &&
+            database.wishlistDao().getPendingDelete().isEmpty() &&
+            database.wishDao().getPendingDelete().isEmpty()
+    }
+
     suspend fun pushPending() {
         // Outer loop ловит lost-wakeup: запрос, пришедший во время нашего
         // push, видел занятый mutex, выставил флаг и ушёл. После unlock —

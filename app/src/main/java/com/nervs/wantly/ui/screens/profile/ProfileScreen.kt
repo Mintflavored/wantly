@@ -17,10 +17,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +48,20 @@ fun ProfileScreen(
     val isLoggedIn by app.container.sessionManager.isLoggedIn.collectAsState(initial = false)
     val displayName by app.container.sessionManager.displayName.collectAsState(initial = null)
     val email by app.container.sessionManager.email.collectAsState(initial = null)
+    var showLogoutError by remember { mutableStateOf(false) }
+
+    if (showLogoutError) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLogoutError = false },
+            confirmButton = {
+                TextButton(onClick = { showLogoutError = false }) {
+                    Text(stringResource(R.string.action_ok))
+                }
+            },
+            title = { Text(stringResource(R.string.profile_logout_failed_title)) },
+            text = { Text(stringResource(R.string.profile_logout_failed_text)) },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -75,11 +93,16 @@ fun ProfileScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
-                            // Сначала flush несинхронизированных локальных изменений,
-                            // иначе clearLocal() потеряет их безвозвратно.
-                            app.container.syncManager.pushPending()
-                            app.container.syncManager.clearLocal()
-                            app.container.sessionManager.clearSession()
+                            // Verified flush: если остались unsynced rows
+                            // (API offline / token expired) — НЕ очищаем локальные
+                            // данные, иначе они потеряются безвозвратно.
+                            val flushed = app.container.syncManager.pushPendingVerified()
+                            if (flushed) {
+                                app.container.syncManager.clearLocal()
+                                app.container.sessionManager.clearSession()
+                            } else {
+                                showLogoutError = true
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
