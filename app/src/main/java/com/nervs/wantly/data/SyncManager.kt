@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Local-first синхронизация.
@@ -70,8 +71,7 @@ class SyncManager(
      * Фоновая отправка dirty-записей.
      * Если mutex занят — планируем повтор после текущего sync.
      */
-    @Volatile
-    private var pushPendingScheduled = false
+    private val pushPendingScheduled = AtomicBoolean(false)
 
     /** Push через application scope — не отменяется при popBackStack. */
     fun pushPendingScoped() {
@@ -79,31 +79,30 @@ class SyncManager(
     }
 
     suspend fun pushPending() {
-        // Outer loop ловит lost-wakeup: запрос, пришедший между сбросом флага
-        // и mutex.unlock(), видел занятый mutex, выставил флаг и ушёл.
-        // После unlock проверяем флаг и прогоняем ещё один цикл.
+        // Outer loop ловит lost-wakeup: запрос, пришедший во время нашего
+        // push, видел занятый mutex, выставил флаг и ушёл. После unlock —
+        // CAS: если флаг=true, атомарно сбрасываем и делаем ещё один виток
+        // со свежим DAO snapshot (параллельные dirty изменения).
         while (true) {
             if (!mutex.tryLock()) {
                 // Sync идёт — планируем повтор
-                pushPendingScheduled = true
+                pushPendingScheduled.set(true)
                 return
             }
             try {
                 pushPendingInternal()
-                // Сброс под mutex: изменения, замеченные во время push,
-                // обработает следующая итерация.
-                pushPendingScheduled = false
             } finally {
                 mutex.unlock()
             }
-            if (!pushPendingScheduled) return
+            // CAS: выходим только если флаг остался false. Иначе кто-то
+            // звал во время push — сбрасываем и прогоняем ещё раз.
+            if (!pushPendingScheduled.compareAndSet(true, false)) return
         }
     }
 
     /** Отправляем накопленные dirty-записи если был запланирован повтор. */
     private suspend fun drainScheduledPush() {
-        if (pushPendingScheduled) {
-            pushPendingScheduled = false
+        if (pushPendingScheduled.compareAndSet(true, false)) {
             pushPendingInternal()
         }
     }
