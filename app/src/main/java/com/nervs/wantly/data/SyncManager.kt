@@ -40,7 +40,7 @@ class SyncManager(
     }
 
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
-        return mutex.withLock {
+        val result = mutex.withLock {
             try {
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
@@ -53,6 +53,10 @@ class SyncManager(
                 false
             }
         }
+        // Lost-wakeup guard: запрос между CAS-check внутри withLock и unlock
+        // видел занятый mutex, выставил флаг и ушёл. Обрабатываем.
+        if (pushPendingScheduled.get()) pushPending()
+        return result
     }
 
     /** Стартовая синхронизация — один раз, и только при успехе. */
@@ -77,6 +81,8 @@ class SyncManager(
         } else {
             Log.e(TAG, "Стартовый sync не удался — будет ретрай при следующем вызове")
         }
+        // Lost-wakeup guard (тот же что в syncAfterAuth).
+        if (pushPendingScheduled.get()) pushPending()
     }
 
     /**
@@ -280,7 +286,13 @@ class SyncManager(
                 val hasDirtyChildren = wishDao.getAll().any {
                     it.wishlistId == list.id && (!it.synced || it.pendingDelete)
                 }
-                if (!hasDirtyChildren) {
+                if (hasDirtyChildren) {
+                    // Parent удалён на сервере, но есть локальные изменения.
+                    // Отсоединяем serverId и помечаем несинхронизированным —
+                    // push пересоздаст список и привяжет children к новому id,
+                    // иначе push получал бы 404 и children зависали навсегда.
+                    wishlistDao.update(list.copy(serverId = null, synced = false))
+                } else {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
                 }
             }
