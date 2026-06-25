@@ -43,6 +43,14 @@ interface WishDao {
     @Query("UPDATE wishes SET serverId = :serverId, synced = 1 WHERE id = :localId")
     suspend fun setServerId(localId: Long, serverId: Long)
 
+    /**
+     * Привязывает serverId И помечает synced — только если статус не изменился
+     * и нет pendingDelete. Защита от race: пока POST в полёте, пользователь мог
+     * изменить статус или удалить wish — безусловный setServerId затёр бы dirty flag.
+     */
+    @Query("UPDATE wishes SET serverId = :serverId, synced = 1 WHERE id = :localId AND status = :expectedStatus AND pendingDelete = 0")
+    suspend fun setServerIdIfUnchanged(localId: Long, serverId: Long, expectedStatus: String)
+
     @Query("UPDATE wishes SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
 

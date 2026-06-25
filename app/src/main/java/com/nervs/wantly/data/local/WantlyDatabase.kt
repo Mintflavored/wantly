@@ -34,12 +34,14 @@ abstract class WantlyDatabase : RoomDatabase() {
          * Migration 1→2: добавлены serverId, synced, pendingDelete.
          *
          * Schema default ВСЕГДА 0 (совпадает с @ColumnInfo(defaultValue = "0") в entity).
-         * Room валидирует column defaults после миграции — рассогласование
-         * вызывает IllegalStateException на апгрейде.
          *
-         * synced для существующих строк зависит от состояния:
-         * - Залогинен → synced=1 (данные уже на сервере из v1 server-first)
-         * - Гость → synced=0 (dirty, синхронизируется при регистрации)
+         * v1 НЕ имела server CRUD — createWishlist/addWish были только Room insert.
+         * Локальный PK ≠ серверный ID, поэтому serverId НЕ выводим из id.
+         *
+         * - Залогинен → synced=0, serverId=NULL: данные отправятся на сервер
+         *   при первом sync (POST), затем pull вернёт их с настоящими serverId.
+         * - Не залогинен → очищаем Room: v1 logout не чистил таблицы,
+         *   нельзя отличить guest-данные от stale-данных другого аккаунта.
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -50,12 +52,9 @@ abstract class WantlyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
 
-                if (migrationLoggedIn) {
-                    // В v1 (server-first) локальный id = серверный ID.
-                    // Восстанавливаем serverId из id, чтобы pushPending/pull
-                    // корректно работали с этими строками.
-                    db.execSQL("UPDATE wishlists SET serverId = id, synced = 1")
-                    db.execSQL("UPDATE wishes SET serverId = id, synced = 1")
+                if (!migrationLoggedIn) {
+                    db.execSQL("DELETE FROM wishes")
+                    db.execSQL("DELETE FROM wishlists")
                 }
             }
         }

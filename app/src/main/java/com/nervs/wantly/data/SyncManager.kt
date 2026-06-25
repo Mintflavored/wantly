@@ -138,7 +138,9 @@ class SyncManager(
                 val remote = runCatching {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
                 }.getOrNull() ?: continue
-                listDao.setServerId(list.id, remote.id)
+                // Условный setServerId: пока POST в полёте, пользователь мог удалить список.
+                // setServerIdIfUnchanged проверяет pendingDelete = 0.
+                listDao.setServerIdIfUnchanged(list.id, remote.id)
             }
             // UPDATE для существующих — в Фазе 4 (редактирование списков)
         }
@@ -164,7 +166,9 @@ class SyncManager(
                         ),
                     )
                 }.getOrNull() ?: continue
-                wishDao.setServerId(wish.id, remote.id)
+                // Условный setServerId: пока POST в полёте, пользователь мог
+                // изменить статус или удалить wish.
+                wishDao.setServerIdIfUnchanged(wish.id, remote.id, wish.status)
             } else {
                 // Существующая — PATCH статуса
                 if (runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }.isSuccess) {
