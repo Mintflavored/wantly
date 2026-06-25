@@ -79,16 +79,24 @@ class SyncManager(
     }
 
     suspend fun pushPending() {
-        if (!mutex.tryLock()) {
-            // Sync идёт — планируем повтор
-            pushPendingScheduled = true
-            return
-        }
-        try {
-            pushPendingInternal()
-            drainScheduledPush()
-        } finally {
-            mutex.unlock()
+        // Outer loop ловит lost-wakeup: запрос, пришедший между сбросом флага
+        // и mutex.unlock(), видел занятый mutex, выставил флаг и ушёл.
+        // После unlock проверяем флаг и прогоняем ещё один цикл.
+        while (true) {
+            if (!mutex.tryLock()) {
+                // Sync идёт — планируем повтор
+                pushPendingScheduled = true
+                return
+            }
+            try {
+                pushPendingInternal()
+                // Сброс под mutex: изменения, замеченные во время push,
+                // обработает следующая итерация.
+                pushPendingScheduled = false
+            } finally {
+                mutex.unlock()
+            }
+            if (!pushPendingScheduled) return
         }
     }
 

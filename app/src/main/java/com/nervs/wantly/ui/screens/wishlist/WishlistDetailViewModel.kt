@@ -31,14 +31,15 @@ class WishlistDetailViewModel(
                 wish,
                 WishStatus.next(WishStatus.fromName(wish.status)),
             )
-            syncManager.pushPending()
+            // appScope: push не должен отменяться при popBackStack экрана
+            syncManager.pushPendingScoped()
         }
     }
 
     fun deleteWish(wish: WishEntity) {
         viewModelScope.launch {
             repository.deleteWish(wish)
-            syncManager.pushPending()
+            syncManager.pushPendingScoped()
         }
     }
 }

@@ -11,12 +11,6 @@ import com.nervs.wantly.data.repository.WishlistRepository
 
 /** Ручной DI-контейнер (без Hilt, чтобы держать сборку простой). */
 class AppContainer(context: Context) {
-    // Устанавливаем состояние логина ДО открытия БД — для миграции v1→v2
-    init {
-        val sessionManager = SessionManager(context)
-        WantlyDatabase.migrationLoggedIn = sessionManager.isLoggedInBlocking()
-    }
-
     private val database = WantlyDatabase.get(context)
 
     val sessionManager = SessionManager(context)

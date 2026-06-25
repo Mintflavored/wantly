@@ -23,33 +23,17 @@ abstract class WantlyDatabase : RoomDatabase() {
         private var INSTANCE: WantlyDatabase? = null
 
         /**
-         * Контекст для миграции: залогинен ли пользователь на момент v1→v2.
-         * Устанавливается из AppContainer до открытия БД.
-         */
-        @Volatile
-        @JvmStatic
-        var migrationLoggedIn: Boolean = false
-
-        /**
          * Migration 1→2: добавлены serverId, synced, pendingDelete.
          *
          * Schema default ВСЕГДА 0 (совпадает с @ColumnInfo(defaultValue = "0") в entity).
          *
-         * v1 НЕ имела server CRUD — локальный PK ≠ серверный ID.
-         * v1 register() вызывала migrateLocalToServer(), которая POSTила данные
-         * на сервер, но Room строки не очищала.
+         * Все v1-строки (guest и залогиненные) сохраняются с serverId=NULL,
+         * synced=0. Startup sync отправит их на сервер как новые.
          *
-         * Стратегия по состоянию входа:
-         * - Залогинен → DELETE (данные на сервере через migrateLocalToServer,
-         *   pull восстановит). Без DELETE → startup sync POSTит дубликаты.
-         * - Гость → KEEP serverId=NULL, synced=0 (гостевые данные сохраняются,
-         *   отправятся на сервер при регистрации).
-         *
-         * Уязвимое место: v1 logout не чистил Room → stale данные залогиненного
-         * становятся неотличимы от guest-данных. Но это Edge case:
-         * пользователь должен был залогиниться, добавить данные, выйти,
-         * затем обновиться. Потеря этих данных менее критична, чем потеря
-         * настоящих guest-данных при безусловном DELETE.
+         * Раньше для залогиненного юзера делался DELETE с расчетом, что pull
+         * восстановит данные с сервера. Но v1 не имела полноценного sync-движка,
+         * поэтому данные могли существовать только локально → DELETE терял их
+         * безвозвратно, особенно если первый post-upgrade pull уходил офлайн.
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -59,11 +43,6 @@ abstract class WantlyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
-
-                if (migrationLoggedIn) {
-                    db.execSQL("DELETE FROM wishes")
-                    db.execSQL("DELETE FROM wishlists")
-                }
             }
         }
 
