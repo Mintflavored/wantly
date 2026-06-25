@@ -32,20 +32,28 @@ abstract class WantlyDatabase : RoomDatabase() {
 
         /**
          * Migration 1→2: добавлены serverId, synced, pendingDelete.
-         * synced зависит от состояния:
+         *
+         * Schema default ВСЕГДА 0 (совпадает с @ColumnInfo(defaultValue = "0") в entity).
+         * Room валидирует column defaults после миграции — рассогласование
+         * вызывает IllegalStateException на апгрейде.
+         *
+         * synced для существующих строк зависит от состояния:
          * - Залогинен → synced=1 (данные уже на сервере из v1 server-first)
          * - Гость → synced=0 (dirty, синхронизируется при регистрации)
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                val syncedDefault = if (migrationLoggedIn) 1 else 0
-
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN serverId INTEGER")
-                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT $syncedDefault")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN serverId INTEGER")
-                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT $syncedDefault")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
+
+                if (migrationLoggedIn) {
+                    db.execSQL("UPDATE wishlists SET synced = 1")
+                    db.execSQL("UPDATE wishes SET synced = 1")
+                }
             }
         }
 

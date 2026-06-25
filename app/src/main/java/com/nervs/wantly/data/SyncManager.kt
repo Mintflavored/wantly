@@ -231,31 +231,58 @@ class SyncManager(
             }
 
             // Восстанавливаем dirty-записи и tombstones.
+            // Для записей БЕЗ serverId выделяем свежий локальный ID (autoGenerate),
+            // чтобы временный локальный ID не коллизировал с серверным (#50).
+            val localIdRemap = mutableMapOf<Long, Long>() // старый локальный ID → новый
+
             for (list in dirtyWishlists) {
-                database.wishlistDao().insertWithId(list.copy(
-                    synced = false,
-                    id = list.serverId ?: list.id,
-                ))
+                if (list.serverId != null) {
+                    // Серверная запись стала dirty — REPLACE по serverId
+                    database.wishlistDao().insertWithId(list.copy(
+                        synced = false,
+                        id = list.serverId,
+                    ))
+                } else {
+                    // Локальная запись (POST не удался) — свежий ID
+                    val newId = database.wishlistDao().insert(list.copy(id = 0, synced = false))
+                    localIdRemap[list.id] = newId
+                }
             }
             for (wish in dirtyWishes) {
-                val remappedWishlistId = wishlistIdMap[wish.wishlistId] ?: wish.wishlistId
-                database.wishDao().insertWithId(wish.copy(
-                    synced = false,
-                    wishlistId = remappedWishlistId,
-                    id = wish.serverId ?: wish.id, // #48: сохраняем serverId как PK
-                ))
+                val remappedWishlistId = wishlistIdMap[wish.wishlistId]
+                    ?: localIdRemap[wish.wishlistId]
+                    ?: wish.wishlistId
+                if (wish.serverId != null) {
+                    database.wishDao().insertWithId(wish.copy(
+                        synced = false,
+                        wishlistId = remappedWishlistId,
+                        id = wish.serverId,
+                    ))
+                } else {
+                    val newId = database.wishDao().insert(wish.copy(
+                        id = 0,
+                        synced = false,
+                        wishlistId = remappedWishlistId,
+                    ))
+                    localIdRemap[wish.id] = newId
+                }
             }
+            // Tombstones без serverId не восстанавливаем — сервер о них не знает.
             for (list in tombstoneWishlists) {
-                database.wishlistDao().insertWithId(list.copy(
-                    id = list.serverId ?: list.id,
-                ))
+                if (list.serverId != null) {
+                    database.wishlistDao().insertWithId(list.copy(id = list.serverId))
+                }
             }
             for (wish in tombstoneWishes) {
-                val remappedWishlistId = wishlistIdMap[wish.wishlistId] ?: wish.wishlistId
-                database.wishDao().insertWithId(wish.copy(
-                    wishlistId = remappedWishlistId,
-                    id = wish.serverId ?: wish.id, // #49: сохраняем serverId как PK
-                ))
+                val remappedWishlistId = wishlistIdMap[wish.wishlistId]
+                    ?: localIdRemap[wish.wishlistId]
+                    ?: wish.wishlistId
+                if (wish.serverId != null) {
+                    database.wishDao().insertWithId(wish.copy(
+                        wishlistId = remappedWishlistId,
+                        id = wish.serverId,
+                    ))
+                }
             }
         }
         Log.d(TAG, "pull завершён: ${remoteLists.size} списков")
