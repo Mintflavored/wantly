@@ -59,10 +59,11 @@ class SyncManager(
         if (!isLoggedIn || startupSyncDone) return
         startupSyncDone = true
         mutex.withLock {
-            // Pull ПЕРЕД push: v1-migrated rows (serverId=null, synced=0)
-            // могут уже существовать на сервере (отправлены через старый
-            // migrateLocalToServer). Сначала pull дедуплицирует их по title,
-            // затем push отправляет только реально новые/изменённые.
+            // Pull ПЕРЕД push: UPSERT обновляет существующие локальные записи
+            // по serverId до того, как push начнёт POSTить. Для v1-migrated
+            // строк (serverId=null) это не критично — UPSERT их не трогает,
+            // push отправит. Возможные дубли для v1-юзеров с уже-отправленными-
+            // через-migrateLocalToServer данными принят как known limitation.
             runCatching { pullInternal() }
                 .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
             runCatching { pushPendingInternal() }
@@ -287,18 +288,14 @@ class SyncManager(
                 }
             }
 
-            // === 5. Дедупликация v1-migrated: локальные wishlists без serverId,
-            //    чьи title совпадают с серверными — уже были отправлены через
-            //    старый migrateLocalToServer в v1. Удаляем (cascade), чтобы push
-            //    не плодил дубли после pull.
-            val serverListTitles = details
-                .map { it.wishlist.title.trim().lowercase() }
-                .toHashSet()
-            for (list in wishlistDao.getAll()) {
-                if (list.serverId == null && list.title.trim().lowercase() in serverListTitles) {
-                    wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
-                }
-            }
+            // === 5. (no v1-migrated dedup) ===
+            // Title-match небезопасен как ключ дедупликации: легальный случай
+            // — пользователь создал локальный список с тем же title, что у
+            // серверного, но с другими wishes. Удаление по title + cascade
+            // вело к необратимой потере данных. Дубли v1-migrated rows (если
+            // они были отправлены через старый migrateLocalToServer) принят как
+            // known limitation — data integrity важнее отсутствия дубликатов.
+            // Живых v1-юзеров нет, для свежих пользователей unreachable.
         }
         Log.d(TAG, "pull завершён: ${details.size} списков")
     }
