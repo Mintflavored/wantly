@@ -34,6 +34,9 @@ class SyncManager(
     @Volatile
     private var startupSyncDone = false
 
+    /** Test-only: состояние флага «startup sync завершён успешно». */
+    internal fun isStartupSyncDoneForTest(): Boolean = startupSyncDone
+
     /** Sync после авторизации — в application scope. */
     fun syncAfterAuthScoped(isRegistration: Boolean) {
         appScope.launch { syncAfterAuth(isRegistration) }
@@ -254,7 +257,7 @@ class SyncManager(
         Log.d(TAG, "pushPending завершён")
     }
 
-    private suspend fun pullInternal() {
+    internal suspend fun pullInternal() {
         val remoteLists = api.getWishlists()
         val details = remoteLists.map { api.getWishlistDetail(it.id) }
 
