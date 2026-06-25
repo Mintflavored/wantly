@@ -182,9 +182,9 @@ class SyncManagerTest {
 
     // ── pushPending: 404 на DELETE трактуется как success ────────────
     // (баг #12)
-
     @Test
-    fun `pushPending DELETE tombstone returns 404 still clears local row`() = runTest {        // Сначала создаём валидный wishlist, чтобы FK не нарушался
+    fun `pushPending DELETE tombstone returns 404 still clears local row`() = runTest {
+        // Сначала создаём валидный wishlist, чтобы FK не нарушался
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 1, synced = true),
         )
@@ -203,6 +203,35 @@ class SyncManagerTest {
 
         // 404 проглочен, локальная запись удалена — иначе зависла бы forever
         assertThat(db.wishDao().getById(10)).isNull()
+    }
+
+    @Test
+    fun `pushPending PATCH 404 detaches serverId for recreation`() = runTest {
+        // Wish с serverId, которого нет на сервере (другой клиент удалил).
+        // PATCH должен вернуть 404 → wish отсоединяется для POST в следующий push.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10,
+                wishlistId = 1,
+                title = "W",
+                status = "PURCHASED",
+                serverId = 500,
+                synced = false, // dirty → push попытается PATCH
+            ),
+        )
+        // Сервер знает wishlist 100, но не знает wish 500
+        fakeApi.seed(WishlistDto(id = 100, title = "L"))
+
+        sync.pushPending()
+
+        val saved = db.wishDao().getById(10)
+        assertThat(saved).isNotNull()
+        // serverId сброшен → следующий push POSTит под текущим parent
+        assertThat(saved!!.serverId).isNull()
+        assertThat(saved.synced).isFalse()
     }
 
     // ── pullInternal UPSERT сохраняет локальный PK ───────────────────
@@ -303,7 +332,7 @@ class SyncManagerTest {
                 title = "W",
                 status = "PURCHASED",
                 serverId = 500,
-                synced = false,
+                synced = false, // dirty
             ),
         )
 
@@ -319,6 +348,78 @@ class SyncManagerTest {
         assertThat(wishes).hasSize(1)
         assertThat(wishes[0].serverId).isNull()
         assertThat(wishes[0].synced).isFalse()
+    }
+
+    @Test
+    fun `pull recreates parent and marks CLEAN children dirty too`() = runTest {
+        // Parent synced, один dirty child + один clean child.
+        // После pull (parent удалён на сервере) оба ребенка должны быть
+        // отсоединены и помечены dirty — иначе clean не попадёт в getUnsynced.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 50, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10,
+                wishlistId = 1,
+                title = "dirty",
+                serverId = 500,
+                synced = false,
+            ),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 11,
+                wishlistId = 1,
+                title = "clean",
+                serverId = 501,
+                synced = true,
+            ),
+        )
+
+        sync.pullInternal()
+
+        val wishes = db.wishDao().getAll().sortedBy { it.id }
+        assertThat(wishes).hasSize(2)
+        // Оба должны быть unsynced — попадут в следующий push
+        assertThat(wishes[0].synced).isFalse()
+        assertThat(wishes[0].serverId).isNull()
+        assertThat(wishes[1].synced).isFalse()
+        assertThat(wishes[1].serverId).isNull()
+    }
+
+    @Test
+    fun `pull drops tombstone child under deleted parent`() = runTest {
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 50, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10,
+                wishlistId = 1,
+                title = "tomb",
+                serverId = 500,
+                synced = false,
+                pendingDelete = true,
+            ),
+        )
+        // Любой dirty child чтобы войти в recreate-ветку
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 11,
+                wishlistId = 1,
+                title = "dirty",
+                serverId = 501,
+                synced = false,
+            ),
+        )
+
+        sync.pullInternal()
+
+        // Tombstone удалён локально (сервер уже не имеет ни parent, ни wish)
+        assertThat(db.wishDao().getById(10)).isNull()
+        // Dirty child — отсоединён для пересоздания
+        assertThat(db.wishDao().getById(11)).isNotNull()
     }
 
     @Test

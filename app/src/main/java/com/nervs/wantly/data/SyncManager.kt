@@ -247,10 +247,20 @@ class SyncManager(
                 wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
             } else {
                 // Существующая — PATCH статуса
-                if (runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }.isSuccess) {
+                val patchResult = runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }
+                if (patchResult.isSuccess) {
                     // Условный markSynced: только если статус не изменился и нет tombstone.
                     // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
                     wishDao.markSyncedIfUnchanged(wish.id, wish.status)
+                } else {
+                    val err = patchResult.exceptionOrNull()
+                    if (err is ApiException && err.code == 404) {
+                        // Wish удалён на сервере (другой клиент). Без отсоединения
+                        // serverId следующий push снова получит 404 и зависнет.
+                        // Сбрасываем → следующий push POSTит под текущим parent.
+                        wishDao.update(wish.copy(serverId = null, synced = false))
+                    }
+                    // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }
             }
         }
@@ -307,14 +317,19 @@ class SyncManager(
                 }
                 if (hasDirtyChildren) {
                     // Parent удалён на сервере, но есть локальные изменения.
-                    // Отсоединяем serverId у parent и children — push пересоздаст
+                    // Отсоединяем serverId у parent и детей — push пересоздаст
                     // родительский список и воссоздаст/удалит детей под новым id,
                     // иначе PATCH/DELETE падал бы с 404 и дети зависали навсегда.
                     wishlistDao.update(list.copy(serverId = null, synced = false))
-                    for (wish in wishDao.getAll().filter {
-                        it.wishlistId == list.id && it.serverId != null
-                    }) {
-                        wishDao.update(wish.copy(serverId = null))
+                    for (wish in wishDao.getAll().filter { it.wishlistId == list.id }) {
+                        when {
+                            // Tombstone под удалённым родителем — сервер уже не имеет
+                            // ни parent, ни child. Удаляем локально, push бы 404.
+                            wish.pendingDelete -> wishDao.deleteById(wish.id)
+                            // Clean и dirty — отсоединяем и помечаем несинхронизированными,
+                            // иначе clean дети не попадут в getUnsynced() и потеряются.
+                            else -> wishDao.update(wish.copy(serverId = null, synced = false))
+                        }
                     }
                 } else {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
