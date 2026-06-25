@@ -51,11 +51,11 @@ interface WishlistDao {
     suspend fun setServerId(localId: Long, serverId: Long)
 
     /**
-     * Привязывает serverId И помечает synced — только если нет pendingDelete.
-     * Защита от race: пока POST в полёте, пользователь мог удалить wishlist.
+     * Привязывает serverId (всегда), но помечает synced — только если нет pendingDelete.
+     * serverId сохраняется ВСЕГДА, чтобы следующий push мог DELETE, а не терять ссылку.
      */
-    @Query("UPDATE wishlists SET serverId = :serverId, synced = 1 WHERE id = :localId AND pendingDelete = 0")
-    suspend fun setServerIdIfUnchanged(localId: Long, serverId: Long)
+    @Query("UPDATE wishlists SET serverId = :serverId, synced = CASE WHEN pendingDelete = 0 THEN 1 ELSE 0 END WHERE id = :localId")
+    suspend fun setServerIdPreservingDirty(localId: Long, serverId: Long)
 
     @Query("UPDATE wishlists SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)

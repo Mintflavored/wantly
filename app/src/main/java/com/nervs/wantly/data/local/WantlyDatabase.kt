@@ -35,13 +35,14 @@ abstract class WantlyDatabase : RoomDatabase() {
          *
          * Schema default ВСЕГДА 0 (совпадает с @ColumnInfo(defaultValue = "0") в entity).
          *
-         * v1 НЕ имела server CRUD — createWishlist/addWish были только Room insert.
-         * Локальный PK ≠ серверный ID, поэтому serverId НЕ выводим из id.
+         * v1 НЕ имела server CRUD — локальный PK ≠ серверный ID.
+         * v1 register() вызывала migrateLocalToServer(), которая POSTила данные
+         * на сервер, но Room строки не очищала. Поэтому мы не можем отличить
+         * «данные уже на сервере» от «локальные guest-данные».
          *
-         * - Залогинен → synced=0, serverId=NULL: данные отправятся на сервер
-         *   при первом sync (POST), затем pull вернёт их с настоящими serverId.
-         * - Не залогинен → очищаем Room: v1 logout не чистил таблицы,
-         *   нельзя отличить guest-данные от stale-данных другого аккаунта.
+         * Решение: очистить Room для ВСЕХ пользователей.
+         * - Залогинен → pull при запуске восстановит данные с сервера.
+         * - Гость → начинает с чистого листа (v1 logout тоже не чистил таблицы).
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -52,10 +53,8 @@ abstract class WantlyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE wishes ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN pendingDelete INTEGER NOT NULL DEFAULT 0")
 
-                if (!migrationLoggedIn) {
-                    db.execSQL("DELETE FROM wishes")
-                    db.execSQL("DELETE FROM wishlists")
-                }
+                db.execSQL("DELETE FROM wishes")
+                db.execSQL("DELETE FROM wishlists")
             }
         }
 

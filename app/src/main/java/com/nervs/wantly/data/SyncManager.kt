@@ -138,9 +138,9 @@ class SyncManager(
                 val remote = runCatching {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
                 }.getOrNull() ?: continue
-                // Условный setServerId: пока POST в полёте, пользователь мог удалить список.
-                // setServerIdIfUnchanged проверяет pendingDelete = 0.
-                listDao.setServerIdIfUnchanged(list.id, remote.id)
+                // serverId сохраняется ВСЕГДА; synced — только если нет pendingDelete.
+                // Даже если список удалён во время POST, мы знаем serverId для DELETE.
+                listDao.setServerIdPreservingDirty(list.id, remote.id)
             }
             // UPDATE для существующих — в Фазе 4 (редактирование списков)
         }
@@ -166,9 +166,10 @@ class SyncManager(
                         ),
                     )
                 }.getOrNull() ?: continue
-                // Условный setServerId: пока POST в полёте, пользователь мог
-                // изменить статус или удалить wish.
-                wishDao.setServerIdIfUnchanged(wish.id, remote.id, wish.status)
+                // serverId сохраняется ВСЕГДА; synced — только если статус не изменился
+                // и нет pendingDelete. Если статус изменился — следующий push PATCHит.
+                // Если удалён — следующий push DELETE по serverId.
+                wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
             } else {
                 // Существующая — PATCH статуса
                 if (runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }.isSuccess) {
@@ -239,7 +240,10 @@ class SyncManager(
             // Восстанавливаем dirty-записи и tombstones.
             // Для записей БЕЗ serverId выделяем свежий локальный ID (autoGenerate),
             // чтобы временный локальный ID не коллизировал с серверным (#50).
-            val localIdRemap = mutableMapOf<Long, Long>() // старый локальный ID → новый
+            // Отдельные map для wishlist и wish: ID из разных таблиц могут
+            // совпадать (обе начинаются с 1) — общий map перезапишет remap (#53).
+            val wishlistIdRemap = mutableMapOf<Long, Long>() // старый wishlist ID → новый
+            val wishIdRemap = mutableMapOf<Long, Long>() // старый wish ID → новый
 
             for (list in dirtyWishlists) {
                 if (list.serverId != null) {
@@ -251,12 +255,12 @@ class SyncManager(
                 } else {
                     // Локальная запись (POST не удался) — свежий ID
                     val newId = database.wishlistDao().insert(list.copy(id = 0, synced = false))
-                    localIdRemap[list.id] = newId
+                    wishlistIdRemap[list.id] = newId
                 }
             }
             for (wish in dirtyWishes) {
                 val remappedWishlistId = wishlistIdMap[wish.wishlistId]
-                    ?: localIdRemap[wish.wishlistId]
+                    ?: wishlistIdRemap[wish.wishlistId]
                     ?: wish.wishlistId
                 if (wish.serverId != null) {
                     database.wishDao().insertWithId(wish.copy(
@@ -270,7 +274,7 @@ class SyncManager(
                         synced = false,
                         wishlistId = remappedWishlistId,
                     ))
-                    localIdRemap[wish.id] = newId
+                    wishIdRemap[wish.id] = newId
                 }
             }
             // Tombstones без serverId не восстанавливаем — сервер о них не знает.
@@ -281,7 +285,7 @@ class SyncManager(
             }
             for (wish in tombstoneWishes) {
                 val remappedWishlistId = wishlistIdMap[wish.wishlistId]
-                    ?: localIdRemap[wish.wishlistId]
+                    ?: wishlistIdRemap[wish.wishlistId]
                     ?: wish.wishlistId
                 if (wish.serverId != null) {
                     database.wishDao().insertWithId(wish.copy(
