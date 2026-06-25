@@ -6,6 +6,7 @@ import com.nervs.wantly.data.local.WantlyDatabase
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.remote.WantlyApi
+import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
 import kotlinx.coroutines.CoroutineScope
@@ -144,22 +145,33 @@ class SyncManager(
 
     // ── Внутренние (под mutex) ────────────────────────────
 
+    /** Успех или 404 — сервер уже не содержит запись, желаемое состояние достигнуто. */
+    private suspend fun isDeletedOrGone(block: suspend () -> Unit): Boolean = try {
+        block(); true
+    } catch (e: ApiException) {
+        e.code == 404
+    } catch (e: Exception) {
+        false
+    }
+
     private suspend fun pushPendingInternal() {
         val wishDao = database.wishDao()
         val listDao = database.wishlistDao()
 
-        // 1. DELETE: отправляем tombstones, удаляем только при успехе
+        // 1. DELETE: отправляем tombstones, удаляем только при успехе.
+        // 404 трактуем как успех — запись уже удалена на сервере
+        // (другой клиент, или прошлый DELETE упал после применения).
         for (wish in wishDao.getPendingDelete()) {
             val sid = wish.serverId ?: run {
                 wishDao.deleteById(wish.id); continue
             }
-            if (runCatching { api.deleteWish(sid) }.isSuccess) wishDao.deleteById(wish.id)
+            if (isDeletedOrGone { api.deleteWish(sid) }) wishDao.deleteById(wish.id)
         }
         for (list in listDao.getPendingDelete()) {
             val sid = list.serverId ?: run {
                 listDao.deleteById(list.id); continue
             }
-            if (runCatching { api.deleteWishlist(sid) }.isSuccess) listDao.deleteById(list.id)
+            if (isDeletedOrGone { api.deleteWishlist(sid) }) listDao.deleteById(list.id)
         }
 
         // 2. CREATE/UPDATE wishlists
@@ -251,10 +263,16 @@ class SyncManager(
             }
 
             // === 2. Удалить локальные серверные wishlists, отсутствующие на сервере.
-            //     Tombstones не трогаем — push должен отправить DELETE.
+            //     Пропускаем tombstone (push отправит DELETE), dirty (push отправит
+            //     изменения) и списки с unsynced wishes (cascade по FK вытер бы их —
+            //     local-first data loss). Конфликт разрешится на следующем pull
+            //     после успешного push.
             for (list in wishlistDao.getAll()) {
                 val sid = list.serverId ?: continue
-                if (sid !in remoteListIds && !list.pendingDelete) {
+                if (sid in remoteListIds || list.pendingDelete || !list.synced) continue
+                val hasUnsyncedChildren = wishDao.getAll()
+                    .any { it.wishlistId == list.id && it.serverId == null }
+                if (!hasUnsyncedChildren) {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
                 }
             }
@@ -299,11 +317,11 @@ class SyncManager(
             }
 
             // === 4. Удалить локальные серверные wishes, отсутствующие на сервере.
+            //     Пропускаем tombstone и dirty (как и для wishlists выше).
             for (wish in wishDao.getAll()) {
                 val sid = wish.serverId ?: continue
-                if (sid !in remoteWishIds && !wish.pendingDelete) {
-                    wishDao.deleteById(wish.id)
-                }
+                if (sid in remoteWishIds || wish.pendingDelete || !wish.synced) continue
+                wishDao.deleteById(wish.id)
             }
 
             // === 5. (no v1-migrated dedup) ===
