@@ -91,7 +91,10 @@ class SyncManager(
             val pushOk = runCatching { pushAndDrain() }
                 .onFailure { Log.e(TAG, "Стартовый push не удался", it) }
                 .isSuccess
-            pullOk && pushOk
+            // pushAndDrain успешно завершается даже если API errors проглочены
+            // и dirty rows остались. Проверяем явно, иначе startup sync будет
+            // помечен выполненным при недоставленных данных.
+            pullOk && pushOk && !hasUnsyncedRows()
         }
         if (ok) {
             startupSyncDone = true
@@ -123,13 +126,17 @@ class SyncManager(
      */
     suspend fun pushPendingVerifiedForLogout(): LogoutSyncOutcome {
         lastSyncSaw401 = false
-        pushPending()
-        val stillDirty = database.wishlistDao().getUnsynced().isNotEmpty() ||
-            database.wishDao().getUnsynced().isNotEmpty() ||
-            database.wishlistDao().getPendingDelete().isNotEmpty() ||
-            database.wishDao().getPendingDelete().isNotEmpty()
+        // Ждём mutex напрямую, а не через tryLock scheduler. Если в flight
+        // есть syncAfterAuth/pushPendingScoped, дождёмся завершения, потом
+        // сделаем финальный push. Иначе dirty check мог бы сработать до того,
+        // как in-flight sync обработает очередь.
+        mutex.withLock {
+            pushAndDrain()
+        }
+        // Lost-wakeup guard (как в syncAfterAuth).
+        if (pushPendingScheduled.get()) pushPending()
         return when {
-            !stillDirty -> LogoutSyncOutcome.SUCCESS
+            !hasUnsyncedRows() -> LogoutSyncOutcome.SUCCESS
             lastSyncSaw401 -> LogoutSyncOutcome.AUTH_EXPIRED
             else -> LogoutSyncOutcome.TRANSIENT_FAILURE
         }
@@ -231,6 +238,13 @@ class SyncManager(
         null
     }
 
+    /** True если в Room остались dirty rows или tombstones. */
+    private suspend fun hasUnsyncedRows(): Boolean =
+        database.wishlistDao().getUnsynced().isNotEmpty() ||
+            database.wishDao().getUnsynced().isNotEmpty() ||
+            database.wishlistDao().getPendingDelete().isNotEmpty() ||
+            database.wishDao().getPendingDelete().isNotEmpty()
+
     private suspend fun pushPendingInternal() {
         val wishDao = database.wishDao()
         val listDao = database.wishlistDao()
@@ -270,8 +284,10 @@ class SyncManager(
             val wishlist = listDao.getById(wish.wishlistId) ?: continue
             val wishlistServerId = wishlist.serverId ?: continue // список ещё не отправлен
             if (wish.serverId == null) {
-                // Новая — POST
-                val remote = apiCall {
+                // Новая — POST. Различаем ошибки: 401 (auth), 404 (parent удалён
+                // на сервере), прочее. apiCall глотает всё, поэтому 404 обрабатываем
+                // явно — отсоединяем parent serverId для recreate-через-pull.
+                val remote = try {
                     api.createWish(
                         wishlistServerId,
                         CreateWishRequest(
@@ -285,7 +301,20 @@ class SyncManager(
                             status = wish.status,
                         ),
                     )
-                } ?: continue
+                } catch (e: ApiException) {
+                    when (e.code) {
+                        401 -> lastSyncSaw401 = true
+                        404 -> {
+                            // Parent list удалён на сервере — отсоединяем serverId,
+                            // следующий pull увидит конфликт и запустит recreate path
+                            // (с reset serverId у детей и пересозданием parent).
+                            listDao.update(wishlist.copy(serverId = null, synced = false))
+                        }
+                    }
+                    continue
+                } catch (e: Exception) {
+                    continue
+                }
                 // serverId сохраняется ВСЕГДА; synced — только если статус не изменился
                 // и нет pendingDelete. Если статус изменился — следующий push PATCHит.
                 // Если удалён — следующий push DELETE по serverId.

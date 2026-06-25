@@ -249,6 +249,34 @@ class SyncManagerTest {
         assertThat(saved.synced).isFalse()
     }
 
+    @Test
+    fun `pushPending createWish 404 detaches parent serverId for recreate`() = runTest {
+        // Локальный wish под списком, который удалён на сервере.
+        // POST wish вернёт 404 (parent не найден) → parent serverId
+        // отсоединяется для recreate-через-pull.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10,
+                wishlistId = 1,
+                title = "W",
+                synced = false,
+            ),
+        )
+        // Сервер не знает wishlist 100 (удалён другим клиентом).
+        // FakeApi.createWish проверяет parent и кидает 404.
+
+        sync.pushPending()
+
+        // Parent отсоединён для recreate
+        val parent = db.wishlistDao().getById(1)
+        assertThat(parent).isNotNull()
+        assertThat(parent!!.serverId).isNull()
+        assertThat(parent.synced).isFalse()
+    }
+
     // ── pullInternal UPSERT сохраняет локальный PK ───────────────────
     // (баг #7)
 
@@ -471,6 +499,24 @@ class SyncManagerTest {
         brokenSync.syncIfLoggedIn(isLoggedIn = true)
 
         assertThat(brokenSync.isStartupSyncDoneForTest()).isFalse()
+    }
+
+    @Test
+    fun `syncIfLoggedIn does not mark startup done when push leaves dirty rows`() = runTest {
+        // Pull проходит, но createWishlist падает → dirty row остаётся.
+        val partialApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { getWishlists() } returns emptyList()
+            coEvery { createWishlist(any()) } throws RuntimeException("server 500")
+        }
+        val partialSync = SyncManager(db, partialApi)
+
+        db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
+
+        partialSync.syncIfLoggedIn(isLoggedIn = true)
+
+        // Push не отправил → startupSyncDone не взведётся, будет retry
+        assertThat(partialSync.isStartupSyncDoneForTest()).isFalse()
+        assertThat(db.wishlistDao().getUnsynced()).hasSize(1)
     }
 
     @Test
