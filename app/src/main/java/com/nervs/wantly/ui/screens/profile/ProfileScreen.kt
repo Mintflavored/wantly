@@ -105,7 +105,10 @@ fun ProfileScreen(
                                 LogoutSyncOutcome.AUTH_EXPIRED -> {
                                     // JWT истёк, push не может отправить. Чистим только
                                     // сессию — Room оставляем, данные уйдут после re-login.
-                                    // isLoggedIn сразу становится false → юзер на auth screen.
+                                    // Сохраняем email чтобы при login проверить — если
+                                    // зайдёт другой юзер, Room надо вытереть (data leak).
+                                    val currentEmail = email
+                                    app.container.sessionManager.setPendingReloginEmail(currentEmail)
                                     app.container.sessionManager.clearSession()
                                 }
                                 LogoutSyncOutcome.TRANSIENT_FAILURE -> {

@@ -25,12 +25,21 @@ class SessionManager(private val context: Context) {
         val USER_ID = longPreferencesKey("user_id")
         val EMAIL = stringPreferencesKey("email")
         val DISPLAY_NAME = stringPreferencesKey("display_name")
+        /**
+         * Email аккаунта, чьи dirty rows остались в Room после AUTH_EXPIRED logout.
+         * При следующем login проверяется: если email не совпадает → Room вытирается,
+         * иначе данные чужого аккаунта уйдут под новым токеном.
+         * Null = нет pending данных (нормальный гостевой/первый вход).
+         */
+        val PENDING_RELOGIN_EMAIL = stringPreferencesKey("pending_relogin_email")
     }
 
     val token: Flow<String?> = context.dataStore.data.map { it[Keys.TOKEN] }
     val isLoggedIn: Flow<Boolean> = token.map { it != null }
     val displayName: Flow<String?> = context.dataStore.data.map { it[Keys.DISPLAY_NAME] }
     val email: Flow<String?> = context.dataStore.data.map { it[Keys.EMAIL] }
+    val pendingReloginEmail: Flow<String?> =
+        context.dataStore.data.map { it[Keys.PENDING_RELOGIN_EMAIL] }
 
     suspend fun saveSession(token: String, userId: Long, email: String, displayName: String?) {
         context.dataStore.edit { prefs ->
@@ -41,8 +50,23 @@ class SessionManager(private val context: Context) {
         }
     }
 
+    /** Запомнить email аккаунта, чьи dirty rows сохранены после AUTH_EXPIRED. */
+    suspend fun setPendingReloginEmail(email: String?) {
+        context.dataStore.edit { prefs ->
+            if (email == null) prefs.remove(Keys.PENDING_RELOGIN_EMAIL)
+            else prefs[Keys.PENDING_RELOGIN_EMAIL] = email
+        }
+    }
+
     suspend fun clearSession() {
-        context.dataStore.edit { it.clear() }
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.TOKEN)
+            prefs.remove(Keys.USER_ID)
+            prefs.remove(Keys.EMAIL)
+            prefs.remove(Keys.DISPLAY_NAME)
+            // PENDING_RELOGIN_EMAIL НЕ трогаем — он нужен для проверки
+            // при следующем login (другой юзер → вытирать Room).
+        }
     }
 
     /** Синхронное чтение токена для DI (OkHttp interceptor). */

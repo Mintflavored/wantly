@@ -8,6 +8,7 @@ import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -63,10 +64,17 @@ class AuthViewModel(
         update { copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
-                sessionManager.run {
-                    val r = repository.api.login(st.email.trim(), st.password)
-                    saveSession(r.token, r.userId, r.email, r.displayName)
+                val r = repository.api.login(st.email.trim(), st.password)
+                // Защита от утечки данных: если предыдущий юзер вышел через
+                // AUTH_EXPIRED, его dirty rows могли сохраниться в Room.
+                // При входе в ДРУГОЙ аккаунт — вытираем Room, иначе pushAfterAuth
+                // отправит чужие данные под новым токеном.
+                val pendingEmail = sessionManager.pendingReloginEmail.first()
+                if (pendingEmail != null && pendingEmail != r.email) {
+                    syncManager.clearLocal()
                 }
+                sessionManager.setPendingReloginEmail(null)
+                sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
                 // Вход выполнен. Sync в фоне.
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = false)
