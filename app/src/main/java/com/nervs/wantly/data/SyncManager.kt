@@ -245,6 +245,29 @@ class SyncManager(
             database.wishlistDao().getPendingDelete().isNotEmpty() ||
             database.wishDao().getPendingDelete().isNotEmpty()
 
+    /**
+     * Отсоединяет parent wishlist и всех его детей от серверных ID. Используется
+     * в обоих conflict-путях: pull-recreate (parent удалён на сервере) и
+     * push createWish 404 (обнаружили удаление parent во время push).
+     *
+     * - parent → serverId=null, synced=false (push пересоздаст)
+     * - tombstone children → удаляются локально (сервер их уже не имеет)
+     * - остальные children → serverId=null, synced=false (push пересоздаст)
+     */
+    private suspend fun detachParentAndChildren(
+        listDao: com.nervs.wantly.data.local.WishlistDao,
+        wishDao: com.nervs.wantly.data.local.WishDao,
+        wishlist: WishlistEntity,
+    ) {
+        listDao.update(wishlist.copy(serverId = null, synced = false))
+        for (wish in wishDao.getAll().filter { it.wishlistId == wishlist.id }) {
+            when {
+                wish.pendingDelete -> wishDao.deleteById(wish.id)
+                else -> wishDao.update(wish.copy(serverId = null, synced = false))
+            }
+        }
+    }
+
     private suspend fun pushPendingInternal() {
         val wishDao = database.wishDao()
         val listDao = database.wishlistDao()
@@ -305,10 +328,11 @@ class SyncManager(
                     when (e.code) {
                         401 -> lastSyncSaw401 = true
                         404 -> {
-                            // Parent list удалён на сервере — отсоединяем serverId,
-                            // следующий pull увидит конфликт и запустит recreate path
-                            // (с reset serverId у детей и пересозданием parent).
-                            listDao.update(wishlist.copy(serverId = null, synced = false))
+                            // Parent list удалён на сервере. Отсоединяем serverId
+                            // у parent и всех детей — иначе clean дети с устаревшим
+                            // serverId выпадут из getUnsynced() и будут потеряны
+                            // при следующем pull. Логика идентична pull-recreate path.
+                            detachParentAndChildren(listDao, wishDao, wishlist)
                         }
                     }
                     continue
@@ -397,17 +421,7 @@ class SyncManager(
                     // Отсоединяем serverId у parent и детей — push пересоздаст
                     // родительский список и воссоздаст/удалит детей под новым id,
                     // иначе PATCH/DELETE падал бы с 404 и дети зависали навсегда.
-                    wishlistDao.update(list.copy(serverId = null, synced = false))
-                    for (wish in wishDao.getAll().filter { it.wishlistId == list.id }) {
-                        when {
-                            // Tombstone под удалённым родителем — сервер уже не имеет
-                            // ни parent, ни child. Удаляем локально, push бы 404.
-                            wish.pendingDelete -> wishDao.deleteById(wish.id)
-                            // Clean и dirty — отсоединяем и помечаем несинхронизированными,
-                            // иначе clean дети не попадут в getUnsynced() и потеряются.
-                            else -> wishDao.update(wish.copy(serverId = null, synced = false))
-                        }
-                    }
+                    detachParentAndChildren(wishlistDao, wishDao, list)
                 } else {
                     wishlistDao.deleteById(list.id)  // CASCADE удаляет wishes
                 }

@@ -39,10 +39,15 @@ class AuthViewModel(
         update { copy(isLoading = true, error = null) }
         viewModelScope.launch {
             try {
-                sessionManager.run {
-                    val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
-                    saveSession(r.token, r.userId, r.email, r.displayName)
+                val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
+                // Тот же guard что в login(): если после AUTH_EXPIRED logout
+                // остались чужие dirty rows, не уносить их в новый аккаунт.
+                val pendingEmail = sessionManager.pendingReloginEmail.first()
+                if (pendingEmail != null && pendingEmail != r.email) {
+                    syncManager.clearLocal()
                 }
+                sessionManager.setPendingReloginEmail(null)
+                sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
                 // Аккаунт создан. Сессия сохранена.
                 // Гостевые данные в Room помечены synced=false.
                 // syncAfterAuth отправит их на сервер и подтянет серверные ID.

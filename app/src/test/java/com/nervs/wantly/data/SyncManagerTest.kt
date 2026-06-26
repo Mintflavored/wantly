@@ -277,6 +277,45 @@ class SyncManagerTest {
         assertThat(parent.synced).isFalse()
     }
 
+    @Test
+    fun `pushPending createWish 404 detaches CLEAN siblings too`() = runTest {
+        // Parent + dirty wish (триггерит createWish, который упадёт 404) +
+        // clean sibling (не должен потеряться при parent-recreate).
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10,
+                wishlistId = 1,
+                title = "dirty",
+                synced = false, // триггерит createWish → 404
+            ),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 11,
+                wishlistId = 1,
+                title = "clean",
+                serverId = 501,
+                synced = true, // clean sibling
+            ),
+        )
+
+        sync.pushPending()
+
+        // Parent отсоединён
+        val parent = db.wishlistDao().getById(1)
+        assertThat(parent!!.serverId).isNull()
+        assertThat(parent.synced).isFalse()
+
+        // Clean sibling тоже отсоединён и помечен dirty — попадёт в getUnsynced
+        val cleanSibling = db.wishDao().getById(11)
+        assertThat(cleanSibling).isNotNull()
+        assertThat(cleanSibling!!.serverId).isNull()
+        assertThat(cleanSibling.synced).isFalse()
+    }
+
     // ── pullInternal UPSERT сохраняет локальный PK ───────────────────
     // (баг #7)
 
