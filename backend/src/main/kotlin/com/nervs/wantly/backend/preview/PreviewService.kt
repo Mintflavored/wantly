@@ -161,8 +161,35 @@ object PreviewService {
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
         else "https://$trimmed"
         val url = runCatching { URL(withScheme) }.getOrNull() ?: return null
-        if (isPrivateOrLoopback(url.host)) return null
+        val host = url.host
+        // Сначала reject нестандартные numeric IP forms (hex/octal/decimal),
+        // которые Chromium каноникализирует, а Java InetAddress — не везде.
+        if (looksLikeNonStandardIpLiteral(host)) return null
+        if (isPrivateOrLoopback(host)) return null
         return url.toExternalForm()
+    }
+
+    /**
+     * True если [host] похож на numeric IP literal в нестандартной форме,
+     * которую Chromium каноникализирует (hex/octal/decimal single-integer),
+     * а java.net.InetAddress парсит inconsistent по JDK. Rejectим на входе,
+     * чтобы не зависеть от того, совпадёт ли Java-каноникализация с браузерной.
+     *
+     * Standard dotted-quad (127.0.0.1) и IPv6 ([::1]) НЕ reject-ятся здесь —
+     * их корректно проверяет [isPrivateOrLoopback].
+     */
+    private fun looksLikeNonStandardIpLiteral(host: String): Boolean {
+        // Standard dotted-quad — корректно проверится через InetAddress.
+        if (host.matches(Regex("""^\d{1,3}(\.\d{1,3}){3}$"""))) return false
+        // IPv6 в [] — корректно проверится.
+        if (host.startsWith("[") && host.endsWith("]")) return false
+        // Decimal single integer (2130706433 = 127.0.0.1).
+        if (host.matches(Regex("""^\d{5,}$"""))) return true
+        // Hex literal (0x7f000001).
+        if (host.startsWith("0x") || host.startsWith("0X")) return true
+        // Octal dotted (0251.0376.0251.0376) — сегмент с ведущим 0 и length > 1.
+        if (host.contains(".") && host.split(".").any { it.matches(Regex("""^0\d+$""")) }) return true
+        return false
     }
 
     /**
@@ -171,19 +198,21 @@ object PreviewService {
      * сервер сходить на http://localhost:xxxx, http://169.254.169.254/
      * (cloud metadata), или внутренние RFC1918 диапазоны.
      *
-     * Разрешаем только публичные адреса. IPv6 тоже проверяется.
+     * Возвращает true при [UnknownHostException] — fail-safe лучше, чем
+     * пропустить suspicious host, который Java не смогла резолвить.
      */
     private fun isPrivateOrLoopback(host: String): Boolean = try {
-        val addr = java.net.InetAddress.getByName(host)
-        addr.isLoopbackAddress ||
-            addr.isAnyLocalAddress ||
-            addr.isLinkLocalAddress ||
-            addr.isSiteLocalAddress || // RFC1918: 10/8, 172.16/12, 192.168/16
-            // cloud metadata endpoints (AWS/GCP/Azure) и link-local соседи.
-            addr.hostAddress == "169.254.169.254"
+        // getAllByName возвращает все A/AAAA records. Любой private — reject.
+        java.net.InetAddress.getAllByName(host).any { addr ->
+            addr.isLoopbackAddress ||
+                addr.isAnyLocalAddress ||
+                addr.isLinkLocalAddress ||
+                addr.isSiteLocalAddress || // RFC1918: 10/8, 172.16/12, 192.168/16
+                addr.hostAddress == "169.254.169.254"
+        }
     } catch (e: java.net.UnknownHostException) {
-        // DNS не резолвится — пропускаем, дальше Playwright сам упадёт.
-        false
+        // Не смогли зарезолвить — fail-safe, отклоняем. Better safe.
+        true
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {
