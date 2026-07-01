@@ -103,9 +103,4 @@ class WishlistRepository(
         } else {
             linkPreviewService.fetch(url)
         }
-
-    /** Больше не нужна — миграция через pushPending при syncAfterAuth. */
-    suspend fun migrateLocalToServer() {
-        // Серверные данные придут через pull после pushPending.
-    }
 }

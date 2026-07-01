@@ -25,7 +25,9 @@ private val DarkColors = darkColorScheme(
 @Composable
 fun WantlyTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // false по умолчанию — dynamic Color (Material You) перебивает брендовые
+    // Rose/Purple/Amber. Хотим стабильный brand identity на всех устройствах.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {
