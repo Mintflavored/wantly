@@ -47,15 +47,25 @@ abstract class WantlyDatabase : RoomDatabase() {
         }
 
         /**
-         * Migration 2→3: добавлен ownerEmail (nullable, без default — существующие
-         * строки получают NULL, что означает «guest / не привязан»).
+         * Migration 2→3: добавлен ownerEmail (nullable). Существующие rows
+         * помечаются маркером __legacy__ — они созданы в предыдущем релизе,
+         * когда понятия ownerEmail не было, и мы не знаем какому аккаунту
+         * принадлежат. Auth guard вытирает Room при обнаружении таких rows,
+         * иначе они могут утечь в чужой аккаунт при первом login после upgrade.
+         *
+         * Новые guest rows создаются с ownerEmail = NULL и нормально
+         * привязываются к аккаунту при login через claimGuestRows.
          */
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN ownerEmail TEXT")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN ownerEmail TEXT")
+                db.execSQL("UPDATE wishlists SET ownerEmail = '${LEGACY_OWNER_MARKER}'")
+                db.execSQL("UPDATE wishes SET ownerEmail = '${LEGACY_OWNER_MARKER}'")
             }
         }
+
+        const val LEGACY_OWNER_MARKER = "__legacy__"
 
         fun get(context: Context): WantlyDatabase =
             INSTANCE ?: synchronized(this) {

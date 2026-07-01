@@ -248,19 +248,23 @@ class SyncManager(
 
     /**
      * Проверка перед login/register: есть ли в Room rows, привязанные к ДРУГОМУ
-     * аккаунту (ownerEmail != null && != [newEmail]). Если есть → clearLocal,
-     * иначе данные чужого аккаунта уйдут в новый при syncAfterAuth.
-     * Возвращает true если Room был вычищен.
+     * аккаунту (ownerEmail != null && != [newEmail]), включая legacy rows
+     * (ownerEmail = __legacy__) оставшиеся от предыдущего релиза — они не
+     * привязаны ни к какому известному аккаунту.
+     * Если есть → clearLocal, иначе данные чужого аккаунта уйдут в новый при
+     * syncAfterAuth. Возвращает true если Room был вычищен.
      */
     suspend fun clearLocalIfOwnedByOther(newEmail: String): Boolean {
-        val hasOtherOwners = mutex.withLock {
+        val hasForeignOrLegacy = mutex.withLock {
+            // getOwned возвращает rows с ownerEmail != null. Если среди них есть
+            // хоть один не совпадающий с newEmail (включая __legacy__) → wipe.
             database.wishlistDao().getOwned().any { it.ownerEmail != newEmail } ||
                 database.wishDao().getOwned().any { it.ownerEmail != newEmail }
         }
-        if (hasOtherOwners) {
+        if (hasForeignOrLegacy) {
             clearLocal()
         }
-        return hasOtherOwners
+        return hasForeignOrLegacy
     }
 
     /**

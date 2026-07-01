@@ -637,6 +637,20 @@ class SyncManagerTest {
     }
 
     @Test
+    fun `clearLocalIfOwnedByOther wipes legacy rows from previous release`() = runTest {
+        // Rows созданы в v1/v2, после migration 2→3 помечены __legacy__.
+        // При login любым аккаунтом — вытираем, мы не знаем чьи они.
+        db.wishlistDao().insert(
+            WishlistEntity(title = "legacy list", ownerEmail = com.nervs.wantly.data.local.WantlyDatabase.LEGACY_OWNER_MARKER),
+        )
+
+        val wiped = sync.clearLocalIfOwnedByOther("any@user")
+
+        assertThat(wiped).isTrue()
+        assertThat(db.wishlistDao().getAll()).isEmpty()
+    }
+
+    @Test
     fun `claimGuestRows binds null-owner rows to the email`() = runTest {
         db.wishlistDao().insert(WishlistEntity(title = "guest list", ownerEmail = null))
         db.wishlistDao().insert(WishlistEntity(title = "owned list", ownerEmail = "existing@user"))
