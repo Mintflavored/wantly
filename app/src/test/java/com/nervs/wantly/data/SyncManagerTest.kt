@@ -223,7 +223,8 @@ class SyncManagerTest {
     @Test
     fun `pushPending PATCH 404 detaches serverId for recreation`() = runTest {
         // Wish с serverId, которого нет на сервере (другой клиент удалил).
-        // PATCH должен вернуть 404 → wish отсоединяется для POST в следующий push.
+        // PATCH вернёт 404 → wish отсоединяется, планируется retry pass,
+        // второй pass POSTит под текущим parent.
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
         )
@@ -244,9 +245,11 @@ class SyncManagerTest {
 
         val saved = db.wishDao().getById(10)
         assertThat(saved).isNotNull()
-        // serverId сброшен → следующий push POSTит под текущим parent
-        assertThat(saved!!.serverId).isNull()
-        assertThat(saved.synced).isFalse()
+        // После retry pass: POST создал новый wish на сервере
+        assertThat(saved!!.serverId).isNotNull()
+        assertThat(saved.serverId).isNotEqualTo(500L) // не старый удалённый
+        assertThat(saved.synced).isTrue()
+        assertThat(fakeApi.wishIds()).hasSize(1)
     }
 
     @Test

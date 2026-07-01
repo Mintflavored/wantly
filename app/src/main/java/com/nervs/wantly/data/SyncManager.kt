@@ -398,6 +398,10 @@ class SyncManager(
                             // serverId следующий push снова получит 404 и зависнет.
                             // Сбрасываем → следующий push POSTит под текущим parent.
                             wishDao.update(wish.copy(serverId = null, synced = false))
+                            // Планируем drain pass — иначе freshly-detached wish
+                            // останется unsynced и pushPendingVerifiedForLogout
+                            // заблокирует logout. Outer loop POSTнет в следующем витке.
+                            pushPendingScheduled.set(true)
                         }
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
