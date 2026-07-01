@@ -8,6 +8,7 @@ import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -32,6 +33,30 @@ class AuthViewModel(
     fun onPasswordChange(v: String) = update { copy(password = v) }
     fun onNameChange(v: String) = update { copy(displayName = v) }
 
+    /**
+     * Перед login/register: убедиться что Room не содержит данных чужого аккаунта.
+     *
+     * Два источника «чужих» rows:
+     * 1. ownerEmail на самой row отличается от [newEmail] (новый механизм).
+     * 2. row создана до schema-migration 2→3 (ownerEmail=NULL), но была
+     *    оставлена при AUTH_EXPIRED logout — фиксируется через
+     *    SessionManager.pendingReloginEmail в ProfileScreen.
+     *
+     * Возвращает true если Room был вычищен.
+     */
+    private suspend fun guardAgainstForeignRows(newEmail: String): Boolean {
+        // (2) — pending relogin email
+        val pendingEmail = sessionManager.pendingReloginEmail.first()
+        if (pendingEmail != null && pendingEmail != newEmail) {
+            syncManager.clearLocal()
+            sessionManager.setPendingReloginEmail(null)
+            return true
+        }
+        sessionManager.setPendingReloginEmail(null)
+        // (1) — ownerEmail на rows
+        return syncManager.clearLocalIfOwnedByOther(newEmail)
+    }
+
     fun register() {
         val st = _uiState.value
         if (st.email.isBlank() || st.password.isBlank()) return
@@ -39,13 +64,10 @@ class AuthViewModel(
         viewModelScope.launch {
             try {
                 val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
-                // Guard: если в Room есть rows, привязанные к другому аккаунту
-                // (после logout с AUTH_EXPIRED или upgrade с предыдущего релиза),
-                // вытираем Room — иначе syncAfterAuth утянет чужие данные.
-                syncManager.clearLocalIfOwnedByOther(r.email)
-                // Привязываем все guest-rows (включая legacy без ownerEmail) к этому аккаунту.
+                guardAgainstForeignRows(r.email)
+                // Привязываем все guest-rows (включая legacy без ownerEmail,
+                // если guard их не вытер) к этому аккаунту.
                 syncManager.claimGuestRows(r.email)
-                sessionManager.setPendingReloginEmail(null)
                 sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = true)
@@ -64,11 +86,8 @@ class AuthViewModel(
         viewModelScope.launch {
             try {
                 val r = repository.api.login(st.email.trim(), st.password)
-                // Тот же guard что в register(): rows от чужого аккаунта → wipe,
-                // guest rows → привязываем к этому аккаунту.
-                syncManager.clearLocalIfOwnedByOther(r.email)
+                guardAgainstForeignRows(r.email)
                 syncManager.claimGuestRows(r.email)
-                sessionManager.setPendingReloginEmail(null)
                 sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = false)
