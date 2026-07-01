@@ -16,10 +16,11 @@ interface WishlistDao {
         SELECT w.*, (SELECT COUNT(*) FROM wishes wi WHERE wi.wishlistId = w.id AND wi.pendingDelete = 0) AS wishCount
         FROM wishlists w
         WHERE w.pendingDelete = 0
+          AND (w.ownerEmail IS NULL OR w.ownerEmail = :ownerEmail)
         ORDER BY w.createdAt DESC
         """,
     )
-    fun observeAllWithCount(): Flow<List<WishlistWithCount>>
+    fun observeAllWithCount(ownerEmail: String?): Flow<List<WishlistWithCount>>
 
     @Query("SELECT * FROM wishlists WHERE id = :id AND pendingDelete = 0")
     fun observeById(id: Long): Flow<WishlistEntity?>

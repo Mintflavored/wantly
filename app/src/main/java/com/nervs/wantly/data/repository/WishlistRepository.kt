@@ -11,8 +11,10 @@ import com.nervs.wantly.data.model.WishStatus
 import com.nervs.wantly.data.remote.LinkPreview
 import com.nervs.wantly.data.remote.LinkPreviewService
 import com.nervs.wantly.data.remote.WantlyApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 
 /**
  * Local-first репозиторий.
@@ -28,7 +30,10 @@ class WishlistRepository(
     val api: WantlyApi,
     private val sessionManager: SessionManager,
 ) {
-    fun observeWishlists(): Flow<List<WishlistWithCount>> = wishlistDao.observeAllWithCount()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeWishlists(): Flow<List<WishlistWithCount>> =
+        sessionManager.email.flatMapLatest { owner -> wishlistDao.observeAllWithCount(owner) }
+
     fun observeWishlist(id: Long): Flow<WishlistEntity?> = wishlistDao.observeById(id)
     fun observeWishes(wishlistId: Long): Flow<List<WishEntity>> = wishDao.observeByWishlist(wishlistId)
 
