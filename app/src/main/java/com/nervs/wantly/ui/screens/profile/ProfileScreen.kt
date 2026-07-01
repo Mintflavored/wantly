@@ -17,10 +17,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nervs.wantly.R
 import com.nervs.wantly.WantlyApp
+import com.nervs.wantly.data.LogoutSyncOutcome
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 
@@ -44,6 +49,20 @@ fun ProfileScreen(
     val isLoggedIn by app.container.sessionManager.isLoggedIn.collectAsState(initial = false)
     val displayName by app.container.sessionManager.displayName.collectAsState(initial = null)
     val email by app.container.sessionManager.email.collectAsState(initial = null)
+    var showLogoutError by remember { mutableStateOf(false) }
+
+    if (showLogoutError) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLogoutError = false },
+            confirmButton = {
+                TextButton(onClick = { showLogoutError = false }) {
+                    Text(stringResource(R.string.action_ok))
+                }
+            },
+            title = { Text(stringResource(R.string.profile_logout_failed_title)) },
+            text = { Text(stringResource(R.string.profile_logout_failed_text)) },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -74,7 +93,30 @@ fun ProfileScreen(
                 Spacer(Modifier.size(24.dp))
                 OutlinedButton(
                     onClick = {
-                        scope.launch { app.container.sessionManager.clearSession() }
+                        scope.launch {
+                            // Verified flush: различаем три исхода.
+                            when (app.container.syncManager.pushPendingVerifiedForLogout()) {
+                                LogoutSyncOutcome.SUCCESS -> {
+                                    // Все dirty данные ушли — чистим Room и сессию атомарно.
+                                    app.container.syncManager.clearLocalUnder {
+                                        app.container.sessionManager.clearSession()
+                                    }
+                                }
+                                LogoutSyncOutcome.AUTH_EXPIRED -> {
+                                    // JWT истёк, push не может отправить. Чистим только
+                                    // сессию — Room оставляем, данные уйдут после re-login.
+                                    // Сохраняем email чтобы при login проверить — если
+                                    // зайдёт другой юзер, Room надо вытереть (data leak).
+                                    val currentEmail = email
+                                    app.container.sessionManager.setPendingReloginEmail(currentEmail)
+                                    app.container.sessionManager.clearSession()
+                                }
+                                LogoutSyncOutcome.TRANSIENT_FAILURE -> {
+                                    // Сетевая/серверная ошибка — не вытираем, иначе data loss.
+                                    showLogoutError = true
+                                }
+                            }
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {

@@ -72,8 +72,8 @@ fun Route.wishlistRoutes() {
                         .toList()
                 }
                 call.respond(
-                    mapOf(
-                        "wishlist" to WishlistDto(
+                    WishlistDetailResponse(
+                        wishlist = WishlistDto(
                             id = list[Wishlists.id],
                             title = list[Wishlists.title],
                             description = list[Wishlists.description],
@@ -81,7 +81,7 @@ fun Route.wishlistRoutes() {
                             coverColor = list[Wishlists.coverColor],
                             wishCount = wishRows.size,
                         ),
-                        "wishes" to wishRows.map { it.toWishDto() },
+                        wishes = wishRows.map { it.toWishDto() },
                     ),
                 )
             }

@@ -2,6 +2,7 @@ package com.nervs.wantly.ui.screens.wishlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.model.WishStatus
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 class WishlistDetailViewModel(
     private val wishlistId: Long,
     private val repository: WishlistRepository,
+    private val syncManager: SyncManager,
 ) : ViewModel() {
     val wishlist: StateFlow<WishlistEntity?> =
         repository.observeWishlist(wishlistId)
@@ -25,11 +27,19 @@ class WishlistDetailViewModel(
 
     fun cycleStatus(wish: WishEntity) {
         viewModelScope.launch {
-            repository.updateWishStatus(wish, WishStatus.next(WishStatus.fromName(wish.status)))
+            repository.updateWishStatus(
+                wish,
+                WishStatus.next(WishStatus.fromName(wish.status)),
+            )
+            // appScope: push не должен отменяться при popBackStack экрана
+            syncManager.pushPendingScoped()
         }
     }
 
     fun deleteWish(wish: WishEntity) {
-        viewModelScope.launch { repository.deleteWish(wish) }
+        viewModelScope.launch {
+            repository.deleteWish(wish)
+            syncManager.pushPendingScoped()
+        }
     }
 }

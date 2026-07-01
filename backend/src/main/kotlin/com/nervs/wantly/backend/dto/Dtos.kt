@@ -103,3 +103,9 @@ data class PreviewResponse(
 data class ErrorResponse(
     val error: String,
 )
+
+@Serializable
+data class WishlistDetailResponse(
+    val wishlist: WishlistDto,
+    val wishes: List<WishDto>,
+)

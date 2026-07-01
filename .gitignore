@@ -65,3 +65,4 @@ backend/test_preview.sh
 # ─── OS ──────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+.hermes/
