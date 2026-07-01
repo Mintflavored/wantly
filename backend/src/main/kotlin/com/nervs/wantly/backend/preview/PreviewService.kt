@@ -160,7 +160,30 @@ object PreviewService {
         if (trimmed.isEmpty()) return null
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
         else "https://$trimmed"
-        return runCatching { URL(withScheme).toExternalForm() }.getOrNull()
+        val url = runCatching { URL(withScheme) }.getOrNull() ?: return null
+        if (isPrivateOrLoopback(url.host)) return null
+        return url.toExternalForm()
+    }
+
+    /**
+     * Защита от SSRF: запрещаем запросы на loopback / private / link-local
+     * адреса. Без этого аутентифицированный пользователь мог бы заставить
+     * сервер сходить на http://localhost:xxxx, http://169.254.169.254/
+     * (cloud metadata), или внутренние RFC1918 диапазоны.
+     *
+     * Разрешаем только публичные адреса. IPv6 тоже проверяется.
+     */
+    private fun isPrivateOrLoopback(host: String): Boolean = try {
+        val addr = java.net.InetAddress.getByName(host)
+        addr.isLoopbackAddress ||
+            addr.isAnyLocalAddress ||
+            addr.isLinkLocalAddress ||
+            addr.isSiteLocalAddress || // RFC1918: 10/8, 172.16/12, 192.168/16
+            // cloud metadata endpoints (AWS/GCP/Azure) и link-local соседи.
+            addr.hostAddress == "169.254.169.254"
+    } catch (e: java.net.UnknownHostException) {
+        // DNS не резолвится — пропускаем, дальше Playwright сам упадёт.
+        false
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {

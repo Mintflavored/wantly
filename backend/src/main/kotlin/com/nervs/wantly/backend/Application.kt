@@ -19,6 +19,9 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger("Application")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
@@ -55,10 +58,27 @@ fun Application.module() {
     }
 
     install(StatusPages) {
+        // 400 — клиент прислал плохой запрос (Ktor кидает при неудачной
+        // десериализации тела, неверном path-параметре, и т.д.).
+        exception<io.ktor.server.plugins.BadRequestException> { call, _ ->
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse("Некорректный запрос"))
+        }
+        // 400 — явный IllegalArgumentException из route-хендлеров
+        // (например, невалидный email/статус).
+        exception<IllegalArgumentException> { call, _ ->
+            call.respond(HttpStatusCode.BadRequest, ErrorResponse("Некорректный запрос"))
+        }
+        // 404 — Ktor кидает when route/path не найден.
+        exception<io.ktor.server.plugins.NotFoundException> { call, _ ->
+            call.respond(HttpStatusCode.NotFound, ErrorResponse("Не найдено"))
+        }
+        // 500 — fallback. Без cause.message — не течёт internal detail
+        // (stack trace, имена классов, SQL-текст и т.п.) наружу.
         exception<Throwable> { call, cause ->
+            logger.error("Unhandled exception", cause)
             call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorResponse("Внутренняя ошибка: ${cause.message}"),
+                ErrorResponse("Внутренняя ошибка сервера"),
             )
         }
     }

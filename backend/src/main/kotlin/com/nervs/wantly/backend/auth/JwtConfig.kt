@@ -11,7 +11,7 @@ object JwtConfig {
     private const val ISSUER = "wantly"
     private const val AUDIENCE = "wantly-users"
     val secret: String = System.getenv("WANTLY_JWT_SECRET")
-        ?: "dev-secret-change-in-production-32chars!!"
+        ?: error("WANTLY_JWT_SECRET env var is required (run backend/deploy/setup_env.sh.example)")
     val realm = "Wantly"
     private val validityMs = 36L * 60 * 60 * 1000
 

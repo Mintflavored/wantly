@@ -1,0 +1,37 @@
+[Unit]
+Description=Wantly Backend API (Ktor)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+# Запускаем под непривилегированным пользователем, не под root.
+User=wantly
+Group=wantly
+WorkingDirectory=/opt/wantly-backend
+ExecStart=/usr/bin/java -Xmx384m -jar /opt/wantly-backend/build/libs/wantly-backend-all.jar
+
+# Секреты (WANTLY_JWT_SECRET, WANTLY_DB_PASSWORD) грузятся из отдельного
+# файла с правами 0600 owner=wantly. Сам файл в git НЕ хранится.
+EnvironmentFile=/etc/wantly/backend.env
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wantly-backend
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

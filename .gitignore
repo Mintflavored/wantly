@@ -54,8 +54,13 @@ google-services.json
 backend/build/
 backend/.gradle/
 
-# ─── Secrets / deploy (never commit) ─────────────────────
-backend/deploy/
+# ─── Secrets / deploy ───────────────────────────────────
+# Конкретные sanitized-референсы коммитим как примеры; остальное
+# (env file, реальный add_db_pass.sh, smoke-тесты с token'ами) — нет.
+backend/deploy/*
+!backend/deploy/wantly-backend.service
+!backend/deploy/setup_env.sh.example
+!backend/deploy/wantlyapp.ru.nginx
 backend/test_api.sh
 backend/test_api.py
 backend/test_preview.sh
