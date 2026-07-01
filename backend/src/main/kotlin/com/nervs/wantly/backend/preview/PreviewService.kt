@@ -56,6 +56,23 @@ object PreviewService {
         var page: Page? = null
         return try {
             page = ensureBrowser().newPage()
+            // Перехватываем ВСЕ запросы страницы — initial, redirects (30x),
+            // subresources. Если редирект ведёт на loopback / RFC1918 / ULA —
+            // abort. page.navigate() следует за 30x автоматически, без этого
+            // interceptor-а можно обойти initial-проверку через публичный URL,
+            // который редиректит на localhost / 169.254.169.254.
+            page.route("**/*") { route ->
+                val reqUrl = route.request().url()
+                val host = runCatching { URL(reqUrl).host }.getOrNull()
+                if (host != null &&
+                    (looksLikeNonStandardIpLiteral(host) || isPrivateOrLoopback(host))
+                ) {
+                    logger.warn("Блокировка запроса на приватный адрес: $reqUrl")
+                    route.abort()
+                } else {
+                    route.resume()
+                }
+            }
             page.setExtraHTTPHeaders(mapOf("Accept-Language" to "ru-RU,ru;q=0.9,en;q=0.8"))
             page.navigate(url, Page.NavigateOptions().setTimeout(20_000.0).setWaitUntil(
                 com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED,
@@ -208,11 +225,21 @@ object PreviewService {
                 addr.isAnyLocalAddress ||
                 addr.isLinkLocalAddress ||
                 addr.isSiteLocalAddress || // RFC1918: 10/8, 172.16/12, 192.168/16
-                addr.hostAddress == "169.254.169.254"
+                addr.hostAddress == "169.254.169.254" ||
+                // IPv6 ULA (RFC4193, fc00::/7) — isSiteLocalAddress их НЕ покрывает.
+                isIpv6Ula(addr)
         }
     } catch (e: java.net.UnknownHostException) {
         // Не смогли зарезолвить — fail-safe, отклоняем. Better safe.
         true
+    }
+
+    /** True если [addr] — IPv6 ULA (fc00::/7, RFC4193). */
+    private fun isIpv6Ula(addr: java.net.InetAddress): Boolean {
+        val bytes = addr.address
+        if (bytes.size != 16) return false // не IPv6
+        // fc00::/7: первые 7 бит = 1111110 → первый байт 0xFC или 0xFD.
+        return bytes[0] == 0xFC.toByte() || bytes[0] == 0xFD.toByte()
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {
