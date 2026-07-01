@@ -577,6 +577,29 @@ class SyncManagerTest {
     }
 
     @Test
+    fun `syncIfLoggedIn wipes legacy rows before push on startup`() = runTest {
+        // Upgrade-сценарий: MIGRATION_2_3 пометила существующие rows __legacy__.
+        // Юзер имеет сохранённый token → автологин → syncIfLoggedIn.
+        // Push НЕ должен отправлять legacy rows под текущим JWT.
+        val ownerApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { getWishlists() } returns emptyList()
+        }
+        val ownerSync = SyncManager(db, ownerApi, emailProvider = { "current@user" })
+
+        db.wishlistDao().insert(
+            WishlistEntity(
+                title = "legacy list",
+                ownerEmail = com.nervs.wantly.data.local.WantlyDatabase.LEGACY_OWNER_MARKER,
+            ),
+        )
+
+        ownerSync.syncIfLoggedIn(isLoggedIn = true)
+
+        // Legacy rows вытерты, не отправлены на сервер
+        assertThat(db.wishlistDao().getAll()).isEmpty()
+    }
+
+    @Test
     fun `syncIfLoggedIn skips when not logged in`() = runTest {
         sync.syncIfLoggedIn(isLoggedIn = false)
         assertThat(sync.isStartupSyncDoneForTest()).isFalse()

@@ -89,6 +89,26 @@ class SyncManager(
             val pullOk = runCatching { pullInternal() }
                 .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
                 .isSuccess
+
+            // Owner/legacy guard: если в Room есть rows от чужого аккаунта
+            // или legacy rows от предыдущего релиза (MIGRATION_2_3 помечает
+            // их __legacy__), не отправлять их под текущим JWT — мы не знаем
+            // чьи они. Вытираем Room и пропускаем push. Это симметрично
+            // guard'у в AuthViewModel.login/register.
+            val owner = emailProvider()
+            val hasForeignOrLegacy = owner != null && (
+                database.wishlistDao().getOwned().any { it.ownerEmail != owner } ||
+                    database.wishDao().getOwned().any { it.ownerEmail != owner }
+            )
+            if (hasForeignOrLegacy) {
+                database.withTransaction {
+                    database.wishDao().clearAll()
+                    database.wishlistDao().clearAll()
+                }
+                Log.w(TAG, "Стартовый sync: обнаружены legacy/foreign rows — Room очищена")
+                return@withLock pullOk
+            }
+
             val pushOk = runCatching { pushAndDrain() }
                 .onFailure { Log.e(TAG, "Стартовый push не удался", it) }
                 .isSuccess
