@@ -252,8 +252,8 @@ class SyncManagerTest {
     @Test
     fun `pushPending createWish 404 detaches parent serverId for recreate`() = runTest {
         // Локальный wish под списком, который удалён на сервере.
-        // POST wish вернёт 404 (parent не найден) → parent serverId
-        // отсоединяется для recreate-через-pull.
+        // POST wish вернёт 404 (parent не найден) → parent и child отсоединяются,
+        // планируется второй проход → parent и child POST'ятся под новым serverId.
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
         )
@@ -270,17 +270,22 @@ class SyncManagerTest {
 
         sync.pushPending()
 
-        // Parent отсоединён для recreate
+        // После 404 push делает второй проход: parent POST → новый serverId,
+        // wish POST под новым parent. Проверяем что данные дошли до сервера.
+        assertThat(fakeApi.wishlistIds()).hasSize(1)
+        assertThat(fakeApi.wishIds()).hasSize(1)
+        // Локальный parent теперь synced с новым serverId
         val parent = db.wishlistDao().getById(1)
         assertThat(parent).isNotNull()
-        assertThat(parent!!.serverId).isNull()
-        assertThat(parent.synced).isFalse()
+        assertThat(parent!!.serverId).isNotNull()
+        assertThat(parent.serverId).isNotEqualTo(100L) // не старый удалённый
+        assertThat(parent.synced).isTrue()
     }
 
     @Test
     fun `pushPending createWish 404 detaches CLEAN siblings too`() = runTest {
         // Parent + dirty wish (триггерит createWish, который упадёт 404) +
-        // clean sibling (не должен потеряться при parent-recreate).
+        // clean sibling (после detach становится dirty и тоже POST'ится).
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
         )
@@ -304,16 +309,19 @@ class SyncManagerTest {
 
         sync.pushPending()
 
-        // Parent отсоединён
-        val parent = db.wishlistDao().getById(1)
-        assertThat(parent!!.serverId).isNull()
-        assertThat(parent.synced).isFalse()
+        // После 404 (pass 1: detach + flag) → pass 2: parent POST + оба wish POST.
+        // На сервере: 1 wishlist + 2 wishes (clean sibling не потерялся).
+        assertThat(fakeApi.wishlistIds()).hasSize(1)
+        assertThat(fakeApi.wishIds()).hasSize(2)
 
-        // Clean sibling тоже отсоединён и помечен dirty — попадёт в getUnsynced
+        // Локально: всё synced
+        val parent = db.wishlistDao().getById(1)
+        assertThat(parent!!.serverId).isNotNull()
+        assertThat(parent.synced).isTrue()
+
         val cleanSibling = db.wishDao().getById(11)
-        assertThat(cleanSibling).isNotNull()
-        assertThat(cleanSibling!!.serverId).isNull()
-        assertThat(cleanSibling.synced).isFalse()
+        assertThat(cleanSibling!!.synced).isTrue()
+        assertThat(cleanSibling.serverId).isNotNull()
     }
 
     // ── pullInternal UPSERT сохраняет локальный PK ───────────────────

@@ -366,6 +366,12 @@ class SyncManager(
                             // serverId выпадут из getUnsynced() и будут потеряны
                             // при следующем pull. Логика идентична pull-recreate path.
                             detachParentAndChildren(listDao, wishDao, wishlist)
+                            // Планируем ещё один pass — иначе push завершится с
+                            // freshly-detached dirty rows и pushPendingVerifiedForLogout
+                            // заблокирует logout. Outer pushPending/pushAndDrain loop
+                            // подхватит флаг и POSTнет parent + children в следующем
+                            // проходе.
+                            pushPendingScheduled.set(true)
                         }
                     }
                     continue
