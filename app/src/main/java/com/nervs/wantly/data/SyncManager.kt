@@ -372,7 +372,8 @@ class SyncManager(
         for (wish in wishDao.getUnsynced()) {
             val wishlist = listDao.getById(wish.wishlistId) ?: continue
             val wishlistServerId = wishlist.serverId ?: continue // список ещё не отправлен
-            if (wish.serverId == null) {
+            val wishServerId = wish.serverId
+            if (wishServerId == null) {
                 // Новая — POST. Различаем ошибки: 401 (auth), 404 (parent удалён
                 // на сервере), прочее. apiCall глотает всё, поэтому 404 обрабатываем
                 // явно — отсоединяем parent serverId для recreate-через-pull.
@@ -417,7 +418,7 @@ class SyncManager(
                 wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
             } else {
                 // Существующая — PATCH статуса
-                val patchResult = runCatching { api.updateWishStatus(wish.serverId!!, wish.status) }
+                val patchResult = runCatching { api.updateWishStatus(wishServerId, wish.status) }
                 if (patchResult.isSuccess) {
                     // Условный markSynced: только если статус не изменился и нет tombstone.
                     // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
