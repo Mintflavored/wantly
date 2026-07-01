@@ -80,34 +80,28 @@ class SyncManager(
     /** Стартовая синхронизация — один раз, и только при успехе. */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
-        // Pull ПЕРЕД push: UPSERT обновляет существующие локальные записи
-        // по serverId до того, как push начнёт POSTить. Для v1-migrated
-        // строк (serverId=null) это не критично — UPSERT их не трогает,
-        // push отправит. Возможные дубли для v1-юзеров с уже-отправленными-
-        // через-migrateLocalToServer данными принят как known limitation.
         val ok = mutex.withLock {
-            val pullOk = runCatching { pullInternal() }
-                .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
-                .isSuccess
-
-            // Owner/legacy guard: если в Room есть rows от чужого аккаунта
-            // или legacy rows от предыдущего релиза (MIGRATION_2_3 помечает
-            // их __legacy__), не отправлять их под текущим JWT — мы не знаем
-            // чьи они. Вытираем Room и пропускаем push. Это симметрично
-            // guard'у в AuthViewModel.login/register.
+            // Owner guard ПЕРЕД pull: если в Room есть rows, привязанные к другому
+            // аккаунту (не совпадает ownerEmail), вытираем их сразу, иначе pull
+            // вставит свежие серверные данные, а старый guard после pull вытер
+            // бы всё вместе с ними.
             val owner = emailProvider()
-            val hasForeignOrLegacy = owner != null && (
+            val hasForeign = owner != null && (
                 database.wishlistDao().getOwned().any { it.ownerEmail != owner } ||
                     database.wishDao().getOwned().any { it.ownerEmail != owner }
             )
-            if (hasForeignOrLegacy) {
+            if (hasForeign) {
                 database.withTransaction {
                     database.wishDao().clearAll()
                     database.wishlistDao().clearAll()
                 }
-                Log.w(TAG, "Стартовый sync: обнаружены legacy/foreign rows — Room очищена")
-                return@withLock pullOk
+                Log.w(TAG, "Стартовый sync: обнаружены foreign rows — Room очищена перед pull")
             }
+
+            // Pull: UPSERT обновляет существующие локальные записи по serverId.
+            val pullOk = runCatching { pullInternal() }
+                .onFailure { Log.e(TAG, "Стартовый pull не удался", it) }
+                .isSuccess
 
             val pushOk = runCatching { pushAndDrain() }
                 .onFailure { Log.e(TAG, "Стартовый push не удался", it) }
@@ -296,6 +290,25 @@ class SyncManager(
             database.wishlistDao().claimGuestRows(email)
             database.wishDao().claimGuestRows(email)
         }
+    }
+
+    /**
+     * Один раз после миграции 2→3: привязать существующие NULL-owner rows
+     * к текущему залогиненному аккаунту (если есть). Если юзер был гостем —
+     * rows остаются NULL и нормально привяжутся при первом login.
+     *
+     * @return true если backfill был выполнен в этом вызове.
+     */
+    suspend fun backfillOwnerEmailIfFirstRun(isBackfillDone: Boolean): Boolean {
+        if (isBackfillDone) return false
+        val currentEmail = emailProvider() ?: return false.also {
+            // Гость при апгрейде — ничего не делаем, rows останутся NULL
+        }
+        mutex.withLock {
+            database.wishlistDao().claimGuestRows(currentEmail)
+            database.wishDao().claimGuestRows(currentEmail)
+        }
+        return true
     }
 
     /**

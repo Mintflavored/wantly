@@ -3,6 +3,7 @@ package com.nervs.wantly.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -32,6 +33,7 @@ class SessionManager(private val context: Context) {
          * Null = нет pending данных (нормальный гостевой/первый вход).
          */
         val PENDING_RELOGIN_EMAIL = stringPreferencesKey("pending_relogin_email")
+        val OWNER_BACKFILL_DONE = booleanPreferencesKey("owner_backfill_done")
     }
 
     val token: Flow<String?> = context.dataStore.data.map { it[Keys.TOKEN] }
@@ -56,6 +58,15 @@ class SessionManager(private val context: Context) {
             if (email == null) prefs.remove(Keys.PENDING_RELOGIN_EMAIL)
             else prefs[Keys.PENDING_RELOGIN_EMAIL] = email
         }
+    }
+
+    /** True если backfill ownerEmail после миграции v3 уже выполнен. */
+    suspend fun isOwnerBackfillDone(): Boolean =
+        context.dataStore.data.first()[Keys.OWNER_BACKFILL_DONE] == true
+
+    /** Пометить backfill выполненным. */
+    suspend fun markOwnerBackfillDone() {
+        context.dataStore.edit { it[Keys.OWNER_BACKFILL_DONE] = true }
     }
 
     suspend fun clearSession() {

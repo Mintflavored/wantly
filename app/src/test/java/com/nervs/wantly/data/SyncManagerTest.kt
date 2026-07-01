@@ -577,26 +577,48 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `syncIfLoggedIn wipes legacy rows before push on startup`() = runTest {
-        // Upgrade-сценарий: MIGRATION_2_3 пометила существующие rows __legacy__.
-        // Юзер имеет сохранённый token → автологин → syncIfLoggedIn.
-        // Push НЕ должен отправлять legacy rows под текущим JWT.
+    fun `syncIfLoggedIn wipes foreign rows before pull on startup`() = runTest {
+        // Юзер с сохранённым token, но в Room есть rows от ДРУГОГО email
+        // (например сменил аккаунт без logout). Push не должен отправить их.
         val ownerApi = mockk<WantlyApi>(relaxed = true) {
             coEvery { getWishlists() } returns emptyList()
         }
         val ownerSync = SyncManager(db, ownerApi, emailProvider = { "current@user" })
 
         db.wishlistDao().insert(
-            WishlistEntity(
-                title = "legacy list",
-                ownerEmail = com.nervs.wantly.data.local.WantlyDatabase.LEGACY_OWNER_MARKER,
-            ),
+            WishlistEntity(title = "foreign list", ownerEmail = "other@user"),
         )
 
         ownerSync.syncIfLoggedIn(isLoggedIn = true)
 
-        // Legacy rows вытерты, не отправлены на сервер
+        // Foreign rows вытерты перед pull
         assertThat(db.wishlistDao().getAll()).isEmpty()
+    }
+
+    @Test
+    fun `backfillOwnerEmailIfFirstRun binds existing rows to current logged-in email`() = runTest {
+        // Upgrade-сценарий: юзер был залогинен, rows не имеют ownerEmail (NULL).
+        val ownerSync = SyncManager(db, api, emailProvider = { "me@user" })
+        db.wishlistDao().insert(WishlistEntity(title = "list", ownerEmail = null))
+
+        val didBackfill = ownerSync.backfillOwnerEmailIfFirstRun(isBackfillDone = false)
+
+        assertThat(didBackfill).isTrue()
+        val row = db.wishlistDao().getAll().first()
+        assertThat(row.ownerEmail).isEqualTo("me@user")
+    }
+
+    @Test
+    fun `backfillOwnerEmailIfFirstRun skips guest upgrade`() = runTest {
+        // Юзер был guest при апгрейде → token/email null → rows остаются NULL
+        val guestSync = SyncManager(db, api, emailProvider = { null })
+        db.wishlistDao().insert(WishlistEntity(title = "guest list", ownerEmail = null))
+
+        val didBackfill = guestSync.backfillOwnerEmailIfFirstRun(isBackfillDone = false)
+
+        // Гость — backfill не делается, rows остаются NULL (привяжутся при login)
+        assertThat(didBackfill).isFalse()
+        assertThat(db.wishlistDao().getAll().first().ownerEmail).isNull()
     }
 
     @Test
@@ -671,14 +693,16 @@ class SyncManagerTest {
     }
 
     @Test
-    fun `clearLocalIfOwnedByOther wipes legacy rows from previous release`() = runTest {
-        // Rows созданы в v1/v2, после migration 2→3 помечены __legacy__.
-        // При login любым аккаунтом — вытираем, мы не знаем чьи они.
+    fun `clearLocalIfOwnedByOther wipes foreign rows from previous release`() = runTest {
+        // Rows созданы в v1/v2, после миграции ownerEmail=NULL. Если юзер
+        // был залогинен при апгрейде — backfill помечает их его email.
+        // Если guest — остаются NULL и привяжутся при login через claimGuestRows.
+        // Здесь симулируем rows от ДРУГОГО email (после re-login без logout).
         db.wishlistDao().insert(
-            WishlistEntity(title = "legacy list", ownerEmail = com.nervs.wantly.data.local.WantlyDatabase.LEGACY_OWNER_MARKER),
+            WishlistEntity(title = "foreign list", ownerEmail = "other@user"),
         )
 
-        val wiped = sync.clearLocalIfOwnedByOther("any@user")
+        val wiped = sync.clearLocalIfOwnedByOther("me@user")
 
         assertThat(wiped).isTrue()
         assertThat(db.wishlistDao().getAll()).isEmpty()

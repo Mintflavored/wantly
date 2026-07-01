@@ -20,6 +20,14 @@ class WantlyApp : Application() {
 
         // Стартовая синхронизация: если есть сохранённый токен — тянем данные
         appScope.launch {
+            // Один раз после миграции v3: привязать существующие NULL-owner rows
+            // к текущему аккаунту (если юзер был залогинен до апгрейда).
+            val backfillDone = container.sessionManager.isOwnerBackfillDone()
+            val didBackfill = container.syncManager.backfillOwnerEmailIfFirstRun(backfillDone)
+            if (didBackfill) {
+                container.sessionManager.markOwnerBackfillDone()
+            }
+
             val loggedIn = container.sessionManager.isLoggedIn.first()
             container.syncManager.syncIfLoggedIn(loggedIn)
         }
