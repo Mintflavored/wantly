@@ -586,4 +586,67 @@ class SyncManagerTest {
         assertThat(seenData).isTrue()
         assertThat(db.wishlistDao().getAll()).isEmpty()
     }
+
+    // ── ownerEmail: привязка rows к аккаунту ─────────────────────────
+    // (баг #30 — legacy upgrade leak)
+
+    @Test
+    fun `clearLocalIfOwnedByOther wipes Room when foreign rows exist`() = runTest {
+        // Room содержит rows от user A
+        db.wishlistDao().insert(WishlistEntity(title = "A's list", ownerEmail = "a@x"))
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 1,
+                wishlistId = 1,
+                title = "A's wish",
+                ownerEmail = "a@x",
+            ),
+        )
+        // Сначала добавим валидный wishlist для FK
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "A's list", ownerEmail = "a@x"),
+        )
+
+        // Login как user B
+        val wiped = sync.clearLocalIfOwnedByOther("b@x")
+
+        assertThat(wiped).isTrue()
+        assertThat(db.wishlistDao().getAll()).isEmpty()
+    }
+
+    @Test
+    fun `clearLocalIfOwnedByOther keeps Room when rows are guest`() = runTest {
+        // Guest rows (ownerEmail = null) — легитимные, не вытираем
+        db.wishlistDao().insert(WishlistEntity(title = "guest list", ownerEmail = null))
+
+        val wiped = sync.clearLocalIfOwnedByOther("new@user")
+
+        assertThat(wiped).isFalse()
+        assertThat(db.wishlistDao().getAll()).hasSize(1)
+    }
+
+    @Test
+    fun `clearLocalIfOwnedByOther keeps Room when rows are same email`() = runTest {
+        // Re-login тем же юзером — нельзя вытирать
+        db.wishlistDao().insert(WishlistEntity(title = "my list", ownerEmail = "same@user"))
+
+        val wiped = sync.clearLocalIfOwnedByOther("same@user")
+
+        assertThat(wiped).isFalse()
+        assertThat(db.wishlistDao().getAll()).hasSize(1)
+    }
+
+    @Test
+    fun `claimGuestRows binds null-owner rows to the email`() = runTest {
+        db.wishlistDao().insert(WishlistEntity(title = "guest list", ownerEmail = null))
+        db.wishlistDao().insert(WishlistEntity(title = "owned list", ownerEmail = "existing@user"))
+
+        sync.claimGuestRows("new@user")
+
+        val all = db.wishlistDao().getAll()
+        // Guest row привязан к new email
+        assertThat(all.first { it.title == "guest list" }.ownerEmail).isEqualTo("new@user")
+        // Уже-привязанный row не трогаем
+        assertThat(all.first { it.title == "owned list" }.ownerEmail).isEqualTo("existing@user")
+    }
 }

@@ -12,6 +12,7 @@ import com.nervs.wantly.data.remote.LinkPreview
 import com.nervs.wantly.data.remote.LinkPreviewService
 import com.nervs.wantly.data.remote.WantlyApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 /**
  * Local-first репозиторий.
@@ -31,22 +32,26 @@ class WishlistRepository(
     fun observeWishlist(id: Long): Flow<WishlistEntity?> = wishlistDao.observeById(id)
     fun observeWishes(wishlistId: Long): Flow<List<WishEntity>> = wishDao.observeByWishlist(wishlistId)
 
-    suspend fun createWishlist(title: String, description: String?, coverColor: Int): Long =
-        wishlistDao.insert(
+    suspend fun createWishlist(title: String, description: String?, coverColor: Int): Long {
+        val owner = sessionManager.email.first()
+        return wishlistDao.insert(
             WishlistEntity(
                 title = title,
                 description = description,
                 coverColor = coverColor,
                 synced = false,
+                ownerEmail = owner,
             ),
         )
+    }
 
     suspend fun deleteWishlist(wishlist: WishlistEntity) {
         wishlistDao.markDeleted(wishlist.id)
     }
 
-    suspend fun addWish(wishlistId: Long, draft: WishDraft): Long =
-        wishDao.insert(
+    suspend fun addWish(wishlistId: Long, draft: WishDraft): Long {
+        val owner = sessionManager.email.first()
+        return wishDao.insert(
             WishEntity(
                 wishlistId = wishlistId,
                 title = draft.title,
@@ -58,8 +63,10 @@ class WishlistRepository(
                 storeName = draft.storeName,
                 status = draft.status.name,
                 synced = false,
+                ownerEmail = owner,
             ),
         )
+    }
 
     suspend fun updateWishStatus(wish: WishEntity, status: WishStatus) {
         wishDao.updateStatus(wish.id, status.name)

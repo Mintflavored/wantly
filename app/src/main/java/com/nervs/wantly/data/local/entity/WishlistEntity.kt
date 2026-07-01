@@ -20,4 +20,10 @@ data class WishlistEntity(
     @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = true,
     /** true = удалено локально, нужно отправить DELETE на сервер. */
     @ColumnInfo(name = "pendingDelete", defaultValue = "0") val pendingDelete: Boolean = false,
+    /**
+     * Email аккаунта, которому принадлежит запись. null = guest / не привязан.
+     * При login/register если в Room есть rows с ownerEmail != null и != нового
+     * email → Room вытирается, иначе данные чужого аккаунта уйдут под новым токеном.
+     */
+    @ColumnInfo(name = "ownerEmail") val ownerEmail: String? = null,
 )

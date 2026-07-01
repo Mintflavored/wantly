@@ -50,6 +50,14 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1")
     suspend fun getPendingDelete(): List<WishlistEntity>
 
+    /** Все rows с ownerEmail != null (привязаны к аккаунту). */
+    @Query("SELECT * FROM wishlists WHERE ownerEmail IS NOT NULL")
+    suspend fun getOwned(): List<WishlistEntity>
+
+    /** Привязать все guest-rows (ownerEmail = NULL) к этому email. */
+    @Query("UPDATE wishlists SET ownerEmail = :email WHERE ownerEmail IS NULL")
+    suspend fun claimGuestRows(email: String)
+
     @Query("UPDATE wishlists SET serverId = :serverId, synced = 1 WHERE id = :localId")
     suspend fun setServerId(localId: Long, serverId: Long)
 

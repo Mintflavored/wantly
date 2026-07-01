@@ -8,7 +8,6 @@ import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.repository.WishlistRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -40,20 +39,15 @@ class AuthViewModel(
         viewModelScope.launch {
             try {
                 val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
-                // Тот же guard что в login(): если после AUTH_EXPIRED logout
-                // остались чужие dirty rows, не уносить их в новый аккаунт.
-                val pendingEmail = sessionManager.pendingReloginEmail.first()
-                if (pendingEmail != null && pendingEmail != r.email) {
-                    syncManager.clearLocal()
-                }
+                // Guard: если в Room есть rows, привязанные к другому аккаунту
+                // (после logout с AUTH_EXPIRED или upgrade с предыдущего релиза),
+                // вытираем Room — иначе syncAfterAuth утянет чужие данные.
+                syncManager.clearLocalIfOwnedByOther(r.email)
+                // Привязываем все guest-rows (включая legacy без ownerEmail) к этому аккаунту.
+                syncManager.claimGuestRows(r.email)
                 sessionManager.setPendingReloginEmail(null)
                 sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
-                // Аккаунт создан. Сессия сохранена.
-                // Гостевые данные в Room помечены synced=false.
-                // syncAfterAuth отправит их на сервер и подтянет серверные ID.
-                // UI не блокируется — если sync упадёт, данные останутся локально.
                 update { copy(isLoading = false, isSuccess = true) }
-                // Sync через application scope — не отменяется при закрытии экрана
                 syncManager.syncAfterAuthScoped(isRegistration = true)
             } catch (e: ApiException) {
                 update { copy(isLoading = false, error = e.message ?: "Ошибка регистрации") }
@@ -70,17 +64,12 @@ class AuthViewModel(
         viewModelScope.launch {
             try {
                 val r = repository.api.login(st.email.trim(), st.password)
-                // Защита от утечки данных: если предыдущий юзер вышел через
-                // AUTH_EXPIRED, его dirty rows могли сохраниться в Room.
-                // При входе в ДРУГОЙ аккаунт — вытираем Room, иначе pushAfterAuth
-                // отправит чужие данные под новым токеном.
-                val pendingEmail = sessionManager.pendingReloginEmail.first()
-                if (pendingEmail != null && pendingEmail != r.email) {
-                    syncManager.clearLocal()
-                }
+                // Тот же guard что в register(): rows от чужого аккаунта → wipe,
+                // guest rows → привязываем к этому аккаунту.
+                syncManager.clearLocalIfOwnedByOther(r.email)
+                syncManager.claimGuestRows(r.email)
                 sessionManager.setPendingReloginEmail(null)
                 sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
-                // Вход выполнен. Sync в фоне.
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = false)
             } catch (e: ApiException) {

@@ -8,6 +8,7 @@ import com.nervs.wantly.data.local.WantlyDatabase
 import com.nervs.wantly.data.remote.LinkPreviewService
 import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.repository.WishlistRepository
+import kotlinx.coroutines.flow.first
 
 /** Ручной DI-контейнер (без Hilt, чтобы держать сборку простой). */
 class AppContainer(context: Context) {
@@ -17,7 +18,7 @@ class AppContainer(context: Context) {
     val guestCounter = GuestCounter(context)
     val linkPreviewService = LinkPreviewService()
     val api = WantlyApi(tokenProvider = { sessionManager.tokenBlocking() })
-    val syncManager = SyncManager(database, api)
+    val syncManager = SyncManager(database, api, emailProvider = { sessionManager.email.first() })
     val repository = WishlistRepository(
         wishlistDao = database.wishlistDao(),
         wishDao = database.wishDao(),

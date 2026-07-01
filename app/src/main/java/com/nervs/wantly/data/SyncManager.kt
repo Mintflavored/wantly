@@ -41,6 +41,7 @@ enum class LogoutSyncOutcome {
 class SyncManager(
     private val database: WantlyDatabase,
     private val api: WantlyApi,
+    private val emailProvider: suspend () -> String? = { null },
 ) {
     private val mutex = Mutex()
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -246,6 +247,34 @@ class SyncManager(
             database.wishDao().getPendingDelete().isNotEmpty()
 
     /**
+     * Проверка перед login/register: есть ли в Room rows, привязанные к ДРУГОМУ
+     * аккаунту (ownerEmail != null && != [newEmail]). Если есть → clearLocal,
+     * иначе данные чужого аккаунта уйдут в новый при syncAfterAuth.
+     * Возвращает true если Room был вычищен.
+     */
+    suspend fun clearLocalIfOwnedByOther(newEmail: String): Boolean {
+        val hasOtherOwners = mutex.withLock {
+            database.wishlistDao().getOwned().any { it.ownerEmail != newEmail } ||
+                database.wishDao().getOwned().any { it.ownerEmail != newEmail }
+        }
+        if (hasOtherOwners) {
+            clearLocal()
+        }
+        return hasOtherOwners
+    }
+
+    /**
+     * Привязать все guest-rows (ownerEmail = NULL) к этому email. Вызывается
+     * после успешного login/register перед syncAfterAuth.
+     */
+    suspend fun claimGuestRows(email: String) {
+        mutex.withLock {
+            database.wishlistDao().claimGuestRows(email)
+            database.wishDao().claimGuestRows(email)
+        }
+    }
+
+    /**
      * Отсоединяет parent wishlist и всех его детей от серверных ID. Используется
      * в обоих conflict-путях: pull-recreate (parent удалён на сервере) и
      * push createWish 404 (обнаружили удаление parent во время push).
@@ -375,6 +404,7 @@ class SyncManager(
         database.withTransaction {
             val wishlistDao = database.wishlistDao()
             val wishDao = database.wishDao()
+            val owner = emailProvider()
 
             // === 1. UPSERT wishlists ===
             // Серверные данные обновляют существующие локальные записи по serverId,
@@ -401,6 +431,7 @@ class SyncManager(
                         coverColor = remote.coverColor,
                         serverId = remote.id,
                         synced = true,
+                        ownerEmail = owner,
                     ))
                 }
             }
@@ -461,6 +492,7 @@ class SyncManager(
                             status = remote.status,
                             serverId = remote.id,
                             synced = true,
+                            ownerEmail = owner,
                         ))
                     }
                 }

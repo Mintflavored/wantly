@@ -39,4 +39,6 @@ data class WishEntity(
     @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = true,
     /** true = удалено локально, нужно отправить DELETE на сервер. */
     @ColumnInfo(name = "pendingDelete", defaultValue = "0") val pendingDelete: Boolean = false,
+    /** Email аккаунта-владельца (см. [WishlistEntity.ownerEmail]). */
+    @ColumnInfo(name = "ownerEmail") val ownerEmail: String? = null,
 )

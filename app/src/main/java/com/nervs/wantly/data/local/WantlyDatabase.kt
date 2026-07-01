@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -46,6 +46,17 @@ abstract class WantlyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 2→3: добавлен ownerEmail (nullable, без default — существующие
+         * строки получают NULL, что означает «guest / не привязан»).
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN ownerEmail TEXT")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN ownerEmail TEXT")
+            }
+        }
+
         fun get(context: Context): WantlyDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -53,7 +64,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { INSTANCE = it }
             }
