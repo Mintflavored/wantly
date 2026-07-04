@@ -25,24 +25,40 @@ private val logger = LoggerFactory.getLogger("Application")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
+/**
+ * Ktor-loadable entry point. application.conf указывает на этот метод —
+ * EngineMain через reflection ищет `module(Application)` с одним параметром.
+ * Это ЕДИНСТВЕННЫЙ public метод с именем `module`, чтобы Ktor 3.x не пытался
+ * резолвить overload'ы. Тесты используют [moduleWithDb].
+ */
 fun Application.module() {
-    val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
-        ?: "jdbc:postgresql://localhost:5432/wantly"
-    val dbUser = environment.config.propertyOrNull("db.user")?.getString() ?: "wantly"
-    val dbPass = environment.config.propertyOrNull("db.password")?.getString()
-        ?: System.getenv("WANTLY_DB_PASSWORD")
-        ?: error("WANTLY_DB_PASSWORD not set")
+    moduleWithDb(configureDb = true)
+}
 
-    val dataSource = DatabaseFactory.init(dbUrl, dbUser, dbPass)
+/**
+ * Internal setup. Тесты вызывают с configureDb=false чтобы пропустить
+ * HikariCP/Flyway и использовать свою in-memory H2.
+ */
+internal fun Application.moduleWithDb(configureDb: Boolean) {
+    if (configureDb) {
+        val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
+            ?: "jdbc:postgresql://localhost:5432/wantly"
+        val dbUser = environment.config.propertyOrNull("db.user")?.getString() ?: "wantly"
+        val dbPass = environment.config.propertyOrNull("db.password")?.getString()
+            ?: System.getenv("WANTLY_DB_PASSWORD")
+            ?: error("WANTLY_DB_PASSWORD not set")
 
-    // Закрыть Hikari pool при остановке приложения (Ktor testApplication,
-    // dev reloads, graceful shutdown). Иначе каждый restart копит idle
-    // PostgreSQL connections — можно исчерпать max_connections.
-    environment.monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
-        runCatching {
-            (dataSource as? com.zaxxer.hikari.HikariDataSource)?.close()
-            logger.info("HikariCP pool closed")
-        }.onFailure { logger.warn("Failed to close HikariCP pool", it) }
+        val dataSource = DatabaseFactory.init(dbUrl, dbUser, dbPass)
+
+        // Закрыть Hikari pool при остановке приложения (Ktor testApplication,
+        // dev reloads, graceful shutdown). Иначе каждый restart копит idle
+        // PostgreSQL connections — можно исчерпать max_connections.
+        environment.monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
+            runCatching {
+                (dataSource as? com.zaxxer.hikari.HikariDataSource)?.close()
+                logger.info("HikariCP pool closed")
+            }.onFailure { logger.warn("Failed to close HikariCP pool", it) }
+        }
     }
 
     install(ContentNegotiation) {

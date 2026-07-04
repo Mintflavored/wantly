@@ -63,6 +63,23 @@ dependencies {
     // Kotlinx
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+
+    // ── Test ──────────────────────────────────────────────
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
+    testImplementation("io.ktor:ktor-server-test-host")
+    testImplementation("io.ktor:ktor-client-content-negotiation")
+    testImplementation("io.ktor:ktor-serialization-kotlinx-json")
+    testImplementation("com.h2database:h2:2.3.232")
+    testImplementation("org.jetbrains.exposed:exposed-core:0.61.0")
+    testImplementation("org.jetbrains.exposed:exposed-jdbc:0.61.0")
+    testImplementation("org.jetbrains.exposed:exposed-kotlin-datetime:0.61.0")
+}
+
+tasks.test {
+    useJUnitPlatform()
+    // JwtConfig.secret падает без WANTLY_JWT_SECRET — задаём для тестов.
+    environment("WANTLY_JWT_SECRET", "test-secret-for-unit-tests-only-32chars!!")
 }
 
 repositories {
