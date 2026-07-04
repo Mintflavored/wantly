@@ -175,18 +175,19 @@ class ApplicationTest {
     }
 
     @Test
-    fun `register duplicate email returns 500 or conflict`() = testApp { client ->
+    fun `register duplicate email returns 409 Conflict`() = testApp { client ->
         client.register("dup@example.com")
         val resp = client.post("/api/auth/register") {
             contentType(ContentType.Application.Json)
             setBody(mapOf("email" to "dup@example.com", "password" to "test123"))
         }
-        // Exposed unique constraint violation → необработанный exception → 500
-        // (в проде должен быть 409, но нет catch для ExposedSQLException — known TODO)
-        assertTrue(
-            resp.status == HttpStatusCode.InternalServerError ||
-                resp.status == HttpStatusCode.Conflict,
-            "Expected 500 or 409, got ${resp.status}",
+        // AuthRoutes проверяет existing email ДО insert и возвращает 409.
+        // Строгий ассерт ловит регрессию: если guard уберут, дубликат свалится
+        // в unique-constraint → 500, и этот тест это заметит.
+        assertEquals(
+            HttpStatusCode.Conflict,
+            resp.status,
+            "Expected 409 Conflict for duplicate email, got ${resp.status}",
         )
     }
 
