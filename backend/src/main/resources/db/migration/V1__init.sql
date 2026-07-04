@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     email        VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     display_name VARCHAR(100),
-    created_at   TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    -- TIMESTAMP (without timezone) — совпадает с Exposed timestamp("created_at").
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS wishlists (
@@ -20,7 +21,7 @@ CREATE TABLE IF NOT EXISTS wishlists (
     description TEXT,
     is_shared   BOOLEAN      NOT NULL DEFAULT FALSE,
     cover_color INTEGER      NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_wishlists_owner_id ON wishlists(owner_id);
 
@@ -36,6 +37,6 @@ CREATE TABLE IF NOT EXISTS wishes (
     store_name  VARCHAR(200),
     status      VARCHAR(20)  NOT NULL DEFAULT 'WANTED',
     sort_order  INTEGER      NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_wishes_wishlist_id ON wishes(wishlist_id);
