@@ -54,8 +54,21 @@ object PreviewService {
             ?: return PreviewResponse(url = rawUrl, success = false, error = "Invalid URL")
 
         var page: Page? = null
+        var context: com.microsoft.playwright.BrowserContext? = null
+        var proxy: EgressFilteringProxy? = null
         return try {
-            page = ensureBrowser().newPage()
+            // Egress proxy: все запросы Chromium (initial, redirects, subresources)
+            // идут через локальный CONNECT-proxy, который резолвит host и подключается
+            // к конкретному IP напрямую (atomic resolver+connect) — это закрывает
+            // DNS rebinding TOCTOU и SSRF на приватные диапазоны.
+            proxy = EgressFilteringProxy()
+            context = ensureBrowser().newContext(
+                com.microsoft.playwright.Browser.NewContextOptions()
+                    .setProxy(
+                        com.microsoft.playwright.options.Proxy("http://127.0.0.1:${proxy.port}"),
+                    ),
+            )
+            page = context.newPage()
             page.setExtraHTTPHeaders(mapOf("Accept-Language" to "ru-RU,ru;q=0.9,en;q=0.8"))
             page.navigate(url, Page.NavigateOptions().setTimeout(20_000.0).setWaitUntil(
                 com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED,
@@ -90,6 +103,8 @@ object PreviewService {
             PreviewResponse(url = url, storeName = hostOf(url), success = false, error = e.message)
         } finally {
             page?.close()
+            context?.close()
+            proxy?.stop()
         }
     }
 
@@ -160,7 +175,13 @@ object PreviewService {
         if (trimmed.isEmpty()) return null
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
         else "https://$trimmed"
-        return runCatching { URL(withScheme).toExternalForm() }.getOrNull()
+        // EgressFilteringProxy поддерживает только CONNECT (HTTPS). Если
+        // пропустить http://, Chromium пришлёт absolute-form request и
+        // получит 405 от proxy → preview тихо упадёт. Поэтому явно
+        // отклоняем plain http:// — клиентский fallback (Jsoup) разберётся.
+        val url = runCatching { URL(withScheme) }.getOrNull() ?: return null
+        if (url.protocol != "https") return null
+        return url.toExternalForm()
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {

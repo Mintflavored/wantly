@@ -1,0 +1,17 @@
+#!/bin/bash
+# Пример setup-скрипта для /etc/wantly/backend.env.
+# Скопируйте, отредактируйте секреты, запустите ОДИН РАЗ на сервере.
+#
+#   sudo install -d -o wantly -g wantly -m 0750 /etc/wantly
+#   sudo vi /etc/wantly/backend.env   # впишите значения ниже
+#   sudo chown wantly:wantly /etc/wantly/backend.env
+#   sudo chmod 0600 /etc/wantly/backend.env
+#   sudo systemctl restart wantly-backend
+#
+# Файл НЕ должен попадать в git — секреты только в env file на сервере.
+
+# Сгенерируйте: openssl rand -base64 48
+WANTLY_JWT_SECRET=__REPLACE_ME__
+
+# Пароль пользователя wantly в PostgreSQL.
+WANTLY_DB_PASSWORD=__REPLACE_ME__
