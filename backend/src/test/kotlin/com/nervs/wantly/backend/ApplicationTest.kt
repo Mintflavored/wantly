@@ -58,7 +58,7 @@ class ApplicationTest {
 
     private fun testApp(block: suspend (client: io.ktor.client.HttpClient) -> Unit) =
         testApplication {
-            application { module(configureDb = false) }
+            application { moduleWithDb(configureDb = false) }
             val client = createClient {
                 install(ContentNegotiation) {
                     json(Json { ignoreUnknownKeys = true; isLenient = true })

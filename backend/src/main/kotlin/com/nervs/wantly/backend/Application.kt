@@ -28,14 +28,18 @@ fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 /**
  * Ktor-loadable entry point. application.conf указывает на этот метод —
  * EngineMain через reflection ищет `module(Application)` с одним параметром.
- * НЕ добавлять сюда параметры (Kotlin default args не работают через reflection).
- * Тесты используют overload [module] с configureDb=false.
+ * Это ЕДИНСТВЕННЫЙ public метод с именем `module`, чтобы Ktor 3.x не пытался
+ * резолвить overload'ы. Тесты используют [moduleWithDb].
  */
 fun Application.module() {
-    module(configureDb = true)
+    moduleWithDb(configureDb = true)
 }
 
-fun Application.module(configureDb: Boolean) {
+/**
+ * Internal setup. Тесты вызывают с configureDb=false чтобы пропустить
+ * HikariCP/Flyway и использовать свою in-memory H2.
+ */
+internal fun Application.moduleWithDb(configureDb: Boolean) {
     if (configureDb) {
         val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
             ?: "jdbc:postgresql://localhost:5432/wantly"
