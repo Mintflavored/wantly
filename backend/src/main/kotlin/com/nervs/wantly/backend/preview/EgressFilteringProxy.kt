@@ -116,7 +116,7 @@ class EgressFilteringProxy {
             reject(client, "Upstream connect failed: ${e.message}")
             return
         }
-        synchronized(upstreams) { upstreams.add(upstream) }
+        // socket уже зарегистрирован в upstreams внутри helper'а.
 
         client.getOutputStream().apply {
             write("HTTP/1.1 200 Connection established\r\n\r\n".toByteArray())
@@ -127,20 +127,30 @@ class EgressFilteringProxy {
     }
 
     /**
-     * Перебираем все resolved addresses, пока один не подключится.
-     * Считаем, что isPrivate уже отфильтровал плохие — тут пробуем
-     * только публичные, чтобы preview не падал на единственном дохлом A-record.
+     * Перебираем resolved addresses пока один не подключится.
+     *
+     * Mitigation against leak через slow-dropping A records:
+     * - Не больше 4 попыток (99.9% сайтов имеют 1-2 A record).
+     * - Per-attempt connect timeout 5s, не 10s.
+     * - Socket регистрируется в [upstreams] ДО connect — иначе proxy.stop()
+     *   не сможет прервать pending connects, и Playwright navigation timeout
+     *   (20s) закроет страницу, а proxy threads продолжат ждать.
      */
     private fun connectToFirstReachablePublic(addrs: Array<InetAddress>, port: Int): Socket {
         var lastError: Exception? = null
-        for (addr in addrs) {
-            // Защита — на всякий случай не подключаемся к private даже если
-            // проверка выше что-то пропустила.
+        val attempts = addrs.take(4)
+        for (addr in attempts) {
+            // На всякий случай — private не должен сюда попасть, но проверим.
             if (isPrivate(addr)) continue
+            val socket = Socket()
+            synchronized(upstreams) { upstreams.add(socket) }
             try {
-                return Socket().apply { connect(InetSocketAddress(addr, port), 10_000) }
+                socket.connect(InetSocketAddress(addr, port), 5_000)
+                return socket
             } catch (e: Exception) {
                 lastError = e
+                runCatching { socket.close() }
+                synchronized(upstreams) { upstreams.remove(socket) }
             }
         }
         throw lastError ?: IllegalStateException("No usable public addresses")
