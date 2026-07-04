@@ -39,6 +39,7 @@ class EgressFilteringProxy {
     val port: Int = server.localPort
 
     private val clients = mutableListOf<Socket>()
+    private val upstreams = mutableListOf<Socket>()
     @Volatile private var running = true
 
     init {
@@ -114,6 +115,7 @@ class EgressFilteringProxy {
             reject(client, "Upstream connect failed: ${e.message}")
             return
         }
+        synchronized(upstreams) { upstreams.add(upstream) }
 
         client.getOutputStream().apply {
             write("HTTP/1.1 200 Connection established\r\n\r\n".toByteArray())
@@ -130,6 +132,7 @@ class EgressFilteringProxy {
                 client.getInputStream().copyTo(upstream.getOutputStream())
                 upstream.getOutputStream().flush()
             } finally {
+                // Закрываем output в обе стороны — будит copyTo на обеих сторонах.
                 runCatching { upstream.shutdownOutput() }
             }
         }
@@ -145,6 +148,7 @@ class EgressFilteringProxy {
         upstreamToClient.join()
         runCatching { client.close() }
         runCatching { upstream.close() }
+        synchronized(upstreams) { upstreams.remove(upstream) }
     }
 
     private fun reject(client: Socket, reason: String) {
@@ -155,13 +159,17 @@ class EgressFilteringProxy {
         }
     }
 
-    /** Остановить слушателя и закрыть все активные client-соединения. */
+    /** Остановить слушателя и закрыть все активные client и upstream сокеты. */
     fun stop() {
         running = false
         runCatching { server.close() }
         synchronized(clients) {
             clients.forEach { runCatching { it.close() } }
             clients.clear()
+        }
+        synchronized(upstreams) {
+            upstreams.forEach { runCatching { it.close() } }
+            upstreams.clear()
         }
     }
 

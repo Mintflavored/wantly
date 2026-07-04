@@ -64,7 +64,9 @@ object PreviewService {
             proxy = EgressFilteringProxy()
             context = ensureBrowser().newContext(
                 com.microsoft.playwright.Browser.NewContextOptions()
-                    .setProxy("http=127.0.0.1:${proxy.port}"),
+                    .setProxy(
+                        com.microsoft.playwright.options.Proxy("http://127.0.0.1:${proxy.port}"),
+                    ),
             )
             page = context.newPage()
             page.setExtraHTTPHeaders(mapOf("Accept-Language" to "ru-RU,ru;q=0.9,en;q=0.8"))
