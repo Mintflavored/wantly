@@ -171,12 +171,50 @@ class EgressFilteringProxy {
             addr.isLinkLocalAddress ||
             addr.isSiteLocalAddress || // RFC1918
             addr.hostAddress == "169.254.169.254" ||
-            isIpv6Ula(addr)
+            isIpv6Ula(addr) ||
+            isCarrierGradeNat(addr) ||
+            isSpecialUseIpv4(addr)
 
     /** RFC4193 unique-local fc00::/7. */
     private fun isIpv6Ula(addr: InetAddress): Boolean {
         val bytes = addr.address
         if (bytes.size != 16) return false
         return bytes[0] == 0xFC.toByte() || bytes[0] == 0xFD.toByte()
+    }
+
+    /** RFC6598 Carrier-Grade NAT 100.64.0.0/10. isSiteLocalAddress их НЕ покрывает. */
+    private fun isCarrierGradeNat(addr: InetAddress): Boolean {
+        val bytes = addr.address
+        if (bytes.size != 4) return false
+        return bytes[0] == 100.toByte() && bytes[1] in 64..127
+    }
+
+    /**
+     * Прочие IPv4 special-use ranges, которые не является глобально-маршрутизируемыми
+     * и не должны быть доступны через /api/preview:
+     * - 0.0.0.0/8 — this-network
+     * - 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 — IETF / TEST-NET
+     * - 198.18.0.0/15 — benchmarking
+     * - 240.0.0.0/4 — reserved (включая 255.255.255.255 broadcast)
+     *
+     * Источник: RFC 6890.
+     */
+    private fun isSpecialUseIpv4(addr: InetAddress): Boolean {
+        val bytes = addr.address
+        if (bytes.size != 4) return false
+        val o0 = bytes[0].toInt() and 0xFF
+        val o1 = bytes[1].toInt() and 0xFF
+        val o2 = bytes[2].toInt() and 0xFF
+        return when {
+            o0 == 0 -> true                                  // 0.0.0.0/8
+            o0 == 192 && o1 == 0 && o2 == 0 -> true          // 192.0.0.0/24
+            o0 == 192 && o1 == 0 && o2 == 2 -> true          // 192.0.2.0/24 (TEST-NET-1)
+            o0 == 192 && o1 == 88 && o2 == 99 -> true        // 192.88.99.0/24 (6to4 anycast)
+            o0 == 198 && (o1 == 18 || o1 == 19) -> true      // 198.18.0.0/15 (benchmark)
+            o0 == 198 && o1 == 51 && o2 == 100 -> true       // 198.51.100.0/24 (TEST-NET-2)
+            o0 == 203 && o1 == 0 && o2 == 113 -> true        // 203.0.113.0/24 (TEST-NET-3)
+            o0 >= 240 -> true                                // 240.0.0.0/4 (reserved + broadcast)
+            else -> false
+        }
     }
 }
