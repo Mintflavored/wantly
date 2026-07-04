@@ -25,24 +25,26 @@ private val logger = LoggerFactory.getLogger("Application")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
-fun Application.module() {
-    val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
-        ?: "jdbc:postgresql://localhost:5432/wantly"
-    val dbUser = environment.config.propertyOrNull("db.user")?.getString() ?: "wantly"
-    val dbPass = environment.config.propertyOrNull("db.password")?.getString()
-        ?: System.getenv("WANTLY_DB_PASSWORD")
-        ?: error("WANTLY_DB_PASSWORD not set")
+fun Application.module(configureDb: Boolean = true) {
+    if (configureDb) {
+        val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
+            ?: "jdbc:postgresql://localhost:5432/wantly"
+        val dbUser = environment.config.propertyOrNull("db.user")?.getString() ?: "wantly"
+        val dbPass = environment.config.propertyOrNull("db.password")?.getString()
+            ?: System.getenv("WANTLY_DB_PASSWORD")
+            ?: error("WANTLY_DB_PASSWORD not set")
 
-    val dataSource = DatabaseFactory.init(dbUrl, dbUser, dbPass)
+        val dataSource = DatabaseFactory.init(dbUrl, dbUser, dbPass)
 
-    // Закрыть Hikari pool при остановке приложения (Ktor testApplication,
-    // dev reloads, graceful shutdown). Иначе каждый restart копит idle
-    // PostgreSQL connections — можно исчерпать max_connections.
-    environment.monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
-        runCatching {
-            (dataSource as? com.zaxxer.hikari.HikariDataSource)?.close()
-            logger.info("HikariCP pool closed")
-        }.onFailure { logger.warn("Failed to close HikariCP pool", it) }
+        // Закрыть Hikari pool при остановке приложения (Ktor testApplication,
+        // dev reloads, graceful shutdown). Иначе каждый restart копит idle
+        // PostgreSQL connections — можно исчерпать max_connections.
+        environment.monitor.subscribe(io.ktor.server.application.ApplicationStopped) {
+            runCatching {
+                (dataSource as? com.zaxxer.hikari.HikariDataSource)?.close()
+                logger.info("HikariCP pool closed")
+            }.onFailure { logger.warn("Failed to close HikariCP pool", it) }
+        }
     }
 
     install(ContentNegotiation) {
