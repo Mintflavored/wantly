@@ -13,6 +13,16 @@ import java.net.URL
 private val logger = LoggerFactory.getLogger("PreviewService")
 
 /**
+ * Single-worker dispatcher для Playwright. Playwright Java не thread-safe —
+ * [Browser.newContext] / [Page.navigate] на одном Browser нельзя вызывать
+ * из разных threads без внешней синхронизации (см. Playwright Java docs,
+ * "Running tests in parallel"). Limited(1) гарантирует что одновременно
+ * работает только один preview, даже под concurrency. Не держит Netty
+ * event-loop thread.
+ */
+private val playwrightDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+/**
  * Серверный парсинг ссылок через Playwright + Chromium.
  *
  * В отличие от клиентского парсинга (Jsoup), Chromium выполняет JavaScript —
@@ -53,10 +63,11 @@ object PreviewService {
 
     /**
      * Playwright-fetch с blocking navigate + Thread.sleep — оборачиваем в
-     * withContext(Dispatchers.IO), чтобы не занимать Netty event-loop thread
-     * на всё время навигации (~3-20s).
+     * [playwrightDispatcher] (single-worker), чтобы не занимать Netty
+     * event-loop thread и при этом держать Playwright API single-threaded
+     * (он не thread-safe — см. комментарий у dispatcher declaration).
      */
-    suspend fun fetch(rawUrl: String): PreviewResponse = withContext(Dispatchers.IO) {
+    suspend fun fetch(rawUrl: String): PreviewResponse = withContext(playwrightDispatcher) {
         fetchBlocking(rawUrl)
     }
 
