@@ -16,6 +16,15 @@ kotlin {
     jvmToolchain(21)
 }
 
+// Flyway (и любые другие ServiceLoader-based библиотеки) обнаруживают свои
+// реализации через META-INF/services. При сборке fat-jar без merge —
+// несколько файлов с одним именем затирают друг друга → Flyway.configure().load()
+// падает с "no database support" в java -jar, но работает в IDE/Gradle run.
+// Ktor plugin применяет Shadow transitively; настраиваем merge.
+tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>().configureEach {
+    mergeServiceFiles()
+}
+
 dependencies {
     // Ktor server
     implementation("io.ktor:ktor-server-core")
