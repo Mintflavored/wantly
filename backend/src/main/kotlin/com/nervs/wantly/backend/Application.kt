@@ -25,7 +25,17 @@ private val logger = LoggerFactory.getLogger("Application")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
-fun Application.module(configureDb: Boolean = true) {
+/**
+ * Ktor-loadable entry point. application.conf указывает на этот метод —
+ * EngineMain через reflection ищет `module(Application)` с одним параметром.
+ * НЕ добавлять сюда параметры (Kotlin default args не работают через reflection).
+ * Тесты используют overload [module] с configureDb=false.
+ */
+fun Application.module() {
+    module(configureDb = true)
+}
+
+fun Application.module(configureDb: Boolean) {
     if (configureDb) {
         val dbUrl = environment.config.propertyOrNull("db.url")?.getString()
             ?: "jdbc:postgresql://localhost:5432/wantly"
