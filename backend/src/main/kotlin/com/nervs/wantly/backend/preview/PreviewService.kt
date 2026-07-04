@@ -5,10 +5,22 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
 import com.nervs.wantly.backend.dto.PreviewResponse
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.net.URL
 
 private val logger = LoggerFactory.getLogger("PreviewService")
+
+/**
+ * Single-worker dispatcher для Playwright. Playwright Java не thread-safe —
+ * [Browser.newContext] / [Page.navigate] на одном Browser нельзя вызывать
+ * из разных threads без внешней синхронизации (см. Playwright Java docs,
+ * "Running tests in parallel"). Limited(1) гарантирует что одновременно
+ * работает только один preview, даже под concurrency. Не держит Netty
+ * event-loop thread.
+ */
+private val playwrightDispatcher = Dispatchers.IO.limitedParallelism(1)
 
 /**
  * Серверный парсинг ссылок через Playwright + Chromium.
@@ -49,7 +61,17 @@ object PreviewService {
         }
     }
 
-    fun fetch(rawUrl: String): PreviewResponse {
+    /**
+     * Playwright-fetch с blocking navigate + Thread.sleep — оборачиваем в
+     * [playwrightDispatcher] (single-worker), чтобы не занимать Netty
+     * event-loop thread и при этом держать Playwright API single-threaded
+     * (он не thread-safe — см. комментарий у dispatcher declaration).
+     */
+    suspend fun fetch(rawUrl: String): PreviewResponse = withContext(playwrightDispatcher) {
+        fetchBlocking(rawUrl)
+    }
+
+    private fun fetchBlocking(rawUrl: String): PreviewResponse {
         val url = normalizeUrl(rawUrl)
             ?: return PreviewResponse(url = rawUrl, success = false, error = "Invalid URL")
 
