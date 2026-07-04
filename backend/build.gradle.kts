@@ -34,6 +34,13 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-kotlin-datetime:0.61.0")
     implementation("org.postgresql:postgresql:42.7.11")
 
+    // Connection pool
+    implementation("com.zaxxer:HikariCP:6.2.0")
+
+    // Миграции схемы (вместо SchemaUtils.create)
+    implementation("org.flywaydb:flyway-core:11.7.0")
+    implementation("org.flywaydb:flyway-database-postgresql:11.7.0")
+
     // Auth
     implementation("at.favre.lib:bcrypt:0.10.2")
     implementation("io.ktor:ktor-server-auth-jwt")

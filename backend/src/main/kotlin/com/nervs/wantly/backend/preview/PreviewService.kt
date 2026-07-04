@@ -5,6 +5,8 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
 import com.nervs.wantly.backend.dto.PreviewResponse
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.net.URL
 
@@ -49,7 +51,16 @@ object PreviewService {
         }
     }
 
-    fun fetch(rawUrl: String): PreviewResponse {
+    /**
+     * Playwright-fetch с blocking navigate + Thread.sleep — оборачиваем в
+     * withContext(Dispatchers.IO), чтобы не занимать Netty event-loop thread
+     * на всё время навигации (~3-20s).
+     */
+    suspend fun fetch(rawUrl: String): PreviewResponse = withContext(Dispatchers.IO) {
+        fetchBlocking(rawUrl)
+    }
+
+    private fun fetchBlocking(rawUrl: String): PreviewResponse {
         val url = normalizeUrl(rawUrl)
             ?: return PreviewResponse(url = rawUrl, success = false, error = "Invalid URL")
 

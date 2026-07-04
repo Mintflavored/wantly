@@ -23,6 +23,14 @@ object Wishlists : Table("wishlists") {
     val coverColor = integer("cover_color").default(0)
     val createdAt = timestamp("created_at").clientDefault { Clock.System.now() }
     override val primaryKey = PrimaryKey(id)
+
+    init {
+        // Без explicit index Exposed/PostgreSQL не создаёт его автоматически
+        // для FK — каждый SELECT WHERE owner_id = ? шёл бы seq scan.
+        // Сам index создаётся Flyway V1__init.sql; здесь дублируем для
+        // документации и на случай если SchemaUtils.create снова включат.
+        index("idx_wishlists_owner_id", false, ownerId)
+    }
 }
 
 object Wishes : Table("wishes") {
@@ -39,4 +47,8 @@ object Wishes : Table("wishes") {
     val sortOrder = integer("sort_order").default(0)
     val createdAt = timestamp("created_at").clientDefault { Clock.System.now() }
     override val primaryKey = PrimaryKey(id)
+
+    init {
+        index("idx_wishes_wishlist_id", false, wishlistId)
+    }
 }
