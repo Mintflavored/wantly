@@ -175,10 +175,13 @@ object PreviewService {
         if (trimmed.isEmpty()) return null
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
         else "https://$trimmed"
-        // Базовая URL-валидация. Сетевая SSRF-проверка делается в EgressFilteringProxy,
-        // который атомарно резолвит host и подключается к конкретному IP, закрывая
-        // DNS rebinding TOCTOU.
-        return runCatching { URL(withScheme).toExternalForm() }.getOrNull()
+        // EgressFilteringProxy поддерживает только CONNECT (HTTPS). Если
+        // пропустить http://, Chromium пришлёт absolute-form request и
+        // получит 405 от proxy → preview тихо упадёт. Поэтому явно
+        // отклоняем plain http:// — клиентский fallback (Jsoup) разберётся.
+        val url = runCatching { URL(withScheme) }.getOrNull() ?: return null
+        if (url.protocol != "https") return null
+        return url.toExternalForm()
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {

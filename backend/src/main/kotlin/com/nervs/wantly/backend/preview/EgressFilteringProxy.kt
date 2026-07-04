@@ -106,11 +106,12 @@ class EgressFilteringProxy {
             return
         }
 
-        // Подключаемся к первому публичному IP напрямую, не к hostname —
+        // Подключаемся к первому доступному публичному IP напрямую, не к hostname —
         // это закрывает DNS rebinding (новый lookup в этот момент уже не
-        // состоится, IP зафиксирован в сокете).
+        // состоится, IP зафиксирован в сокете). Если первый public address
+        // не отвечает (IPv6 без маршрута, дохлый CDN node) — пробуем следующий.
         val upstream = try {
-            Socket().apply { connect(InetSocketAddress(addrs.first(), port), 10_000) }
+            connectToFirstReachablePublic(addrs, port)
         } catch (e: Exception) {
             reject(client, "Upstream connect failed: ${e.message}")
             return
@@ -123,6 +124,26 @@ class EgressFilteringProxy {
         }
 
         bridge(client, upstream)
+    }
+
+    /**
+     * Перебираем все resolved addresses, пока один не подключится.
+     * Считаем, что isPrivate уже отфильтровал плохие — тут пробуем
+     * только публичные, чтобы preview не падал на единственном дохлом A-record.
+     */
+    private fun connectToFirstReachablePublic(addrs: Array<InetAddress>, port: Int): Socket {
+        var lastError: Exception? = null
+        for (addr in addrs) {
+            // Защита — на всякий случай не подключаемся к private даже если
+            // проверка выше что-то пропустила.
+            if (isPrivate(addr)) continue
+            try {
+                return Socket().apply { connect(InetSocketAddress(addr, port), 10_000) }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("No usable public addresses")
     }
 
     /** Bidirectional byte tunnel between client and upstream until EOF. */
