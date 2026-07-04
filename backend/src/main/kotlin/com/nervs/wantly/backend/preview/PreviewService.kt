@@ -54,25 +54,19 @@ object PreviewService {
             ?: return PreviewResponse(url = rawUrl, success = false, error = "Invalid URL")
 
         var page: Page? = null
+        var context: com.microsoft.playwright.BrowserContext? = null
+        var proxy: EgressFilteringProxy? = null
         return try {
-            page = ensureBrowser().newPage()
-            // Перехватываем ВСЕ запросы страницы — initial, redirects (30x),
-            // subresources. Если редирект ведёт на loopback / RFC1918 / ULA —
-            // abort. page.navigate() следует за 30x автоматически, без этого
-            // interceptor-а можно обойти initial-проверку через публичный URL,
-            // который редиректит на localhost / 169.254.169.254.
-            page.route("**/*") { route ->
-                val reqUrl = route.request().url()
-                val host = runCatching { URL(reqUrl).host }.getOrNull()
-                if (host != null &&
-                    (looksLikeNonStandardIpLiteral(host) || isPrivateOrLoopback(host))
-                ) {
-                    logger.warn("Блокировка запроса на приватный адрес: $reqUrl")
-                    route.abort()
-                } else {
-                    route.resume()
-                }
-            }
+            // Egress proxy: все запросы Chromium (initial, redirects, subresources)
+            // идут через локальный CONNECT-proxy, который резолвит host и подключается
+            // к конкретному IP напрямую (atomic resolver+connect) — это закрывает
+            // DNS rebinding TOCTOU и SSRF на приватные диапазоны.
+            proxy = EgressFilteringProxy()
+            context = ensureBrowser().newContext(
+                com.microsoft.playwright.Browser.NewContextOptions()
+                    .setProxy("http=127.0.0.1:${proxy.port}"),
+            )
+            page = context.newPage()
             page.setExtraHTTPHeaders(mapOf("Accept-Language" to "ru-RU,ru;q=0.9,en;q=0.8"))
             page.navigate(url, Page.NavigateOptions().setTimeout(20_000.0).setWaitUntil(
                 com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED,
@@ -107,6 +101,8 @@ object PreviewService {
             PreviewResponse(url = url, storeName = hostOf(url), success = false, error = e.message)
         } finally {
             page?.close()
+            context?.close()
+            proxy?.stop()
         }
     }
 
@@ -177,69 +173,10 @@ object PreviewService {
         if (trimmed.isEmpty()) return null
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
         else "https://$trimmed"
-        val url = runCatching { URL(withScheme) }.getOrNull() ?: return null
-        val host = url.host
-        // Сначала reject нестандартные numeric IP forms (hex/octal/decimal),
-        // которые Chromium каноникализирует, а Java InetAddress — не везде.
-        if (looksLikeNonStandardIpLiteral(host)) return null
-        if (isPrivateOrLoopback(host)) return null
-        return url.toExternalForm()
-    }
-
-    /**
-     * True если [host] похож на numeric IP literal в нестандартной форме,
-     * которую Chromium каноникализирует (hex/octal/decimal single-integer),
-     * а java.net.InetAddress парсит inconsistent по JDK. Rejectим на входе,
-     * чтобы не зависеть от того, совпадёт ли Java-каноникализация с браузерной.
-     *
-     * Standard dotted-quad (127.0.0.1) и IPv6 ([::1]) НЕ reject-ятся здесь —
-     * их корректно проверяет [isPrivateOrLoopback].
-     */
-    private fun looksLikeNonStandardIpLiteral(host: String): Boolean {
-        // Standard dotted-quad — корректно проверится через InetAddress.
-        if (host.matches(Regex("""^\d{1,3}(\.\d{1,3}){3}$"""))) return false
-        // IPv6 в [] — корректно проверится.
-        if (host.startsWith("[") && host.endsWith("]")) return false
-        // Decimal single integer (2130706433 = 127.0.0.1).
-        if (host.matches(Regex("""^\d{5,}$"""))) return true
-        // Hex literal (0x7f000001).
-        if (host.startsWith("0x") || host.startsWith("0X")) return true
-        // Octal dotted (0251.0376.0251.0376) — сегмент с ведущим 0 и length > 1.
-        if (host.contains(".") && host.split(".").any { it.matches(Regex("""^0\d+$""")) }) return true
-        return false
-    }
-
-    /**
-     * Защита от SSRF: запрещаем запросы на loopback / private / link-local
-     * адреса. Без этого аутентифицированный пользователь мог бы заставить
-     * сервер сходить на http://localhost:xxxx, http://169.254.169.254/
-     * (cloud metadata), или внутренние RFC1918 диапазоны.
-     *
-     * Возвращает true при [UnknownHostException] — fail-safe лучше, чем
-     * пропустить suspicious host, который Java не смогла резолвить.
-     */
-    private fun isPrivateOrLoopback(host: String): Boolean = try {
-        // getAllByName возвращает все A/AAAA records. Любой private — reject.
-        java.net.InetAddress.getAllByName(host).any { addr ->
-            addr.isLoopbackAddress ||
-                addr.isAnyLocalAddress ||
-                addr.isLinkLocalAddress ||
-                addr.isSiteLocalAddress || // RFC1918: 10/8, 172.16/12, 192.168/16
-                addr.hostAddress == "169.254.169.254" ||
-                // IPv6 ULA (RFC4193, fc00::/7) — isSiteLocalAddress их НЕ покрывает.
-                isIpv6Ula(addr)
-        }
-    } catch (e: java.net.UnknownHostException) {
-        // Не смогли зарезолвить — fail-safe, отклоняем. Better safe.
-        true
-    }
-
-    /** True если [addr] — IPv6 ULA (fc00::/7, RFC4193). */
-    private fun isIpv6Ula(addr: java.net.InetAddress): Boolean {
-        val bytes = addr.address
-        if (bytes.size != 16) return false // не IPv6
-        // fc00::/7: первые 7 бит = 1111110 → первый байт 0xFC или 0xFD.
-        return bytes[0] == 0xFC.toByte() || bytes[0] == 0xFD.toByte()
+        // Базовая URL-валидация. Сетевая SSRF-проверка делается в EgressFilteringProxy,
+        // который атомарно резолвит host и подключается к конкретному IP, закрывая
+        // DNS rebinding TOCTOU.
+        return runCatching { URL(withScheme).toExternalForm() }.getOrNull()
     }
 
     private fun resolveUrl(base: String, src: String): String? = runCatching {
