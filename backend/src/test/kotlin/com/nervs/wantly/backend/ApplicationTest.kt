@@ -569,6 +569,72 @@ class ApplicationTest {
         assertBadRequest(client, resp, "Валюта некорректная (ожидается код ISO 4217, например RUB)")
     }
 
+    // ── Regression: серверная нормализация совпадает с клиентской ────────
+    // (codex P2 x2 — "Normalize currency/URL before validating")
+    //
+    // App принимает `usd` и `example.com` raw — без server-side нормализации
+    // легитимные значения reject'ились бы 400, и SyncManager бесконечно ретраил.
+
+    @Test
+    fun `create wish accepts lowercase currency and normalizes to uppercase`() = testApp { client ->
+        val auth = client.register("wishlowcurrency@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", currency = "usd"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("USD", dto.currency) // нормализовано
+    }
+
+    @Test
+    fun `create wish accepts schemeless URL and normalizes to https`() = testApp { client ->
+        val auth = client.register("wishschemeless@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "example.com/item"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("https://example.com/item", dto.url) // нормализовано
+    }
+
+    @Test
+    fun `update wish accepts lowercase currency and schemeless url`() = testApp { client ->
+        val auth = client.register("wishupdatenorm@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val wish: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish"))
+        }.body()
+        val resp = client.patch("/api/wishes/${wish.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishRequest(title = "Wish", currency = "eur", url = "shop.example"))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status, "Expected 200, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("EUR", dto.currency)
+        assertEquals("https://shop.example", dto.url)
+    }
+
     @Test
     fun `create wish rejects invalid status with specific message`() = testApp { client ->
         val auth = client.register("wishstatus@example.com")

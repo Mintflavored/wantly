@@ -157,6 +157,32 @@ private fun validateUrl(value: String?, fieldName: String) {
     }
 }
 
+/**
+ * Нормализация URL: если схема отсутствует, добавляет `https://`. Соответствует
+ * клиентскому паттерну — Android-форма сохраняет raw `example.com` (preview
+ * нормализует отдельно), а серверная валидация требует http(s)://. Без этой
+ * нормализации легитимные schemeless URL'ы reject'ятся с 400 → SyncManager
+ * бесконечно ретраит. Применять В ДОКУМЕНТЕ НУЖНО до validate().
+ *
+ * Не валидирует сам URL — только добавляет схему. Полную проверку делает
+ * validateUrl + PreviewService.normalizeUrl (https-only, egress constraints).
+ */
+fun normalizeWishUrl(raw: String?): String? {
+    if (raw == null) return null
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+    return "https://$trimmed"
+}
+
+/**
+ * Нормализация валюты: trim + uppercase. App принимает `usd`/`eur` в lowercase
+ * (onCurrencyChange stores raw), server validation требует `^[A-Z]{3}$`.
+ * Без uppercase-normalization легитимные значения reject'ятся → бесконечный
+ * retry в SyncManager. Применять до validate() и при записи в БД.
+ */
+fun normalizeCurrency(raw: String): String = raw.trim().uppercase()
+
 private fun validatePrice(price: Double?) {
     price?.let {
         requireField(!it.isNaN() && it.isFinite() && it >= 0 && it <= MAX_PRICE,
