@@ -20,7 +20,12 @@ object FieldLimits {
     const val WISH_TITLE_MAX = 500
     const val WISH_DESCRIPTION_MAX = 10_000
     const val WISH_STORE_MAX = 200
-    const val URL_MAX = 2_048
+    /**
+     * App-side URL cap ниже серверного: backend prepend'ит https:// (8 символов)
+     * к schemeless URL перед своим 2048-check. Без этого запаса schemeless URL
+     * длиной 2041-2048 прошёл бы UI, но отвергся сервером с 400 → бесконечный retry.
+     */
+    const val URL_MAX = 2_040
 
     /** Верхний лимит цены — зеркало серверного MAX_PRICE. NaN/negative/over-limit
      *  reject'ятся сервером с 400 → без client-side clamp wish завис бы в retry. */

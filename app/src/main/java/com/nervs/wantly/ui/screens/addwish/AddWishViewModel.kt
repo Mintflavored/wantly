@@ -91,12 +91,19 @@ class AddWishViewModel(
                 st.copy(
                     isParsing = false,
                     error = if (!preview.success && preview.title == null) preview.error else null,
-                    title = preview.title ?: st.title,
-                    description = preview.description ?: st.description,
+                    // Clamps дублируют onValueChange: preview-сервис может вернуть
+                    // поля длиннее серверных caps → без clamp save даст 400 и wish
+                    // зависнет в retry.
+                    title = preview.title?.let { FieldLimits.clamp(it, FieldLimits.WISH_TITLE_MAX) } ?: st.title,
+                    description = preview.description?.let {
+                        FieldLimits.clamp(it, FieldLimits.WISH_DESCRIPTION_MAX)
+                    } ?: st.description,
                     price = preview.price?.let { numberForField(it) } ?: st.price,
-                    currency = preview.currency ?: st.currency,
-                    storeName = preview.storeName ?: st.storeName,
-                    imageUrl = preview.imageUrl ?: st.imageUrl,
+                    currency = preview.currency?.take(3) ?: st.currency,
+                    storeName = preview.storeName?.let {
+                        FieldLimits.clamp(it, FieldLimits.WISH_STORE_MAX)
+                    } ?: st.storeName,
+                    imageUrl = preview.imageUrl?.let { FieldLimits.clamp(it, FieldLimits.URL_MAX) } ?: st.imageUrl,
                     url = preview.url,
                 )
             }
