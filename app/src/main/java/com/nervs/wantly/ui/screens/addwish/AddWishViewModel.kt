@@ -39,7 +39,10 @@ data class AddWishUiState(
         get() = title.isNotBlank() &&
             isValidUrl(url) &&
             isValidUrl(imageUrl) &&
-            currency.matches(CURRENCY_REGEX)
+            // Нормализуем перед regex-match: старые wish'ы могли хранить lowercase
+            // валюту (до PR #9), и prefill копирует её как есть. Backend тоже
+            // normalizes (trim+uppercase) — canSave должен быть симметричен.
+            currency.trim().uppercase().matches(CURRENCY_REGEX)
 
     /**
      * Пустой URL ок (поле optional). Непустой нормализуется как backend
