@@ -29,7 +29,25 @@ data class AddWishUiState(
     /** true = редактируем существующий wish (prefill + update); false = создание. */
     val isEditMode: Boolean = false,
 ) {
-    val canSave: Boolean get() = title.isNotBlank()
+    /**
+     * Кнопка Save активна только когда все обязательные поля валидны по серверным
+     * правилам. Без этих проверок UI позволил бы сохранить ftp://-URL или 2-буквенную
+     * валюту → бэкенд 400 → SyncManager бесконечно ретраит → блокирует logout.
+     * Правила — зеркало backend validation/Validators.kt.
+     */
+    val canSave: Boolean
+        get() = title.isNotBlank() &&
+            isValidUrl(url) &&
+            isValidUrl(imageUrl) &&
+            currency.length == 3
+
+    /** Пустой URL ок (поле optional). Непустой — только http(s):// (case-insensitive),
+     *  остальные схемы (ftp/javascript/file) backend reject'ит. */
+    private fun isValidUrl(value: String): Boolean {
+        if (value.isBlank()) return true
+        val lower = value.lowercase()
+        return lower.startsWith("http://") || lower.startsWith("https://")
+    }
 }
 
 class AddWishViewModel(
