@@ -151,6 +151,45 @@ class SyncManagerTest {
         assertThat(saved.url).isEqualTo("https://shop/item")
     }
 
+    // ── Regression: textDirty должен сбрасываться после успешного create POST ──
+    // (codex P2 — "Clear textDirty after a create POST succeeds")
+    //
+    // Сценарий: локально создал wish, отредактировал поля до sync (textDirty=1),
+    // POST отправил актуальные поля, snapshot совпал → row стал synced. textDirty
+    // должен сброситься в 0, иначе следующий cycle-status опять шлёт full PATCH
+    // и перезаписывает чужие field-правки.
+    @Test
+    fun `setServerIdPreservingDirty clears textDirty when POST snapshot matches`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Original", synced = false, textDirty = false),
+        )
+        // Локально отредактировали поля до первого push (textDirty выставляется).
+        db.wishDao().updateEditableFields(
+            id = wishId, title = "Edited", description = null, url = "https://shop/item",
+            imageUrl = null, price = 99.0, currency = "RUB", storeName = null,
+        )
+        // POST отправил именно это состояние → snapshot в setServerIdPreservingDirty
+        // совпадает с актуальным row.
+        db.wishDao().setServerIdPreservingDirty(
+            localId = wishId,
+            serverId = 500,
+            expectedTitle = "Edited",
+            expectedDescription = null,
+            expectedUrl = "https://shop/item",
+            expectedImageUrl = null,
+            expectedPrice = 99.0,
+            expectedCurrency = "RUB",
+            expectedStoreName = null,
+            expectedStatus = "WANTED",
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.serverId).isEqualTo(500L)
+        assertThat(saved.synced).isTrue() // POST успешен, snapshot совпал
+        assertThat(saved.textDirty).isFalse() // textDirty сброшен — follow-up cycle-status пойдёт узким /status
+    }
+
     // ── Regression: textDirty должен сохраняться при неудачной snapshot-check ──
     // (codex P2 — "Keep textDirty when snapshot check fails")
     //

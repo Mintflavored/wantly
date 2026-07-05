@@ -154,6 +154,11 @@ interface WishDao {
      * Проверяем все поля, что едут в UpdateWishRequest — status-only проверки
      * недостаточно: текст/цена/URL меняются чаще без смены status, и edit
      * молча терялся бы (synced затёрт, pull перетёр локал).
+     *
+     * textDirty сбрасывается тем же CASE, что и synced: POST уже отправил
+     * field-правки на сервер, значит row синхронизирован по полям → флаг
+     * не нужен. Иначе (snapshot разошёлся — юзер редактировал пока POST летел)
+     * textDirty остаётся как есть, и следующий push шлёт полный PATCH.
      */
     @Query(
         """
@@ -171,6 +176,19 @@ interface WishDao {
                      AND status = :expectedStatus
                 THEN 1
                 ELSE 0
+            END,
+            textDirty = CASE
+                WHEN pendingDelete = 0
+                     AND title = :expectedTitle
+                     AND (description IS :expectedDescription)
+                     AND (url IS :expectedUrl)
+                     AND (imageUrl IS :expectedImageUrl)
+                     AND (price IS :expectedPrice)
+                     AND currency = :expectedCurrency
+                     AND (storeName IS :expectedStoreName)
+                     AND status = :expectedStatus
+                THEN 0
+                ELSE textDirty
             END
         WHERE id = :localId
         """,
