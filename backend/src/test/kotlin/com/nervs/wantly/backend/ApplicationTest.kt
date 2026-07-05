@@ -635,6 +635,44 @@ class ApplicationTest {
         assertEquals("https://shop.example", dto.url)
     }
 
+    // ── Regression: scheme detection должен быть case-insensitive + reject не-HTTP ──
+    // (codex P2 — "Preserve existing URL schemes during normalization")
+
+    @Test
+    fun `create wish preserves uppercase HTTPS scheme without corrupting url`() = testApp { client ->
+        val auth = client.register("wishuppercase@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "HTTPS://shop.example/item"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        // Не должно быть "https://HTTPS://..." — схема распознана, URL сохранён как есть.
+        assertEquals("HTTPS://shop.example/item", dto.url)
+    }
+
+    @Test
+    fun `create wish rejects non-HTTP scheme with specific message`() = testApp { client ->
+        val auth = client.register("wishftp@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "ftp://shop.example/file"))
+        }
+        assertBadRequest(client, resp, "URL должен использовать схему http:// или https://")
+    }
+
     @Test
     fun `create wish rejects invalid status with specific message`() = testApp { client ->
         val auth = client.register("wishstatus@example.com")

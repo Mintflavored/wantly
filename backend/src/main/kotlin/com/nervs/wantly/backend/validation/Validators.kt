@@ -152,27 +152,36 @@ private fun validateWishFields(
 private fun validateUrl(value: String?, fieldName: String) {
     value?.let {
         requireField(it.length <= MAX_URL_LENGTH, "$fieldName слишком длинный")
-        requireField(it.startsWith("http://") || it.startsWith("https://"),
+        // Case-insensitive: normalizeWishUrl пропускает HTTPS:///HtTp:// как валидные.
+        val lower = it.lowercase()
+        requireField(lower.startsWith("http://") || lower.startsWith("https://"),
             "$fieldName должен начинаться с http:// или https://")
     }
 }
 
 /**
- * Нормализация URL: если схема отсутствует, добавляет `https://`. Соответствует
- * клиентскому паттерну — Android-форма сохраняет raw `example.com` (preview
- * нормализует отдельно), а серверная валидация требует http(s)://. Без этой
- * нормализации легитимные schemeless URL'ы reject'ятся с 400 → SyncManager
- * бесконечно ретраит. Применять В ДОКУМЕНТЕ НУЖНО до validate().
+ * Нормализация URL: если схема отсутствует, добавляет `https://`. Если схема
+ * есть — принимает только http/https (case-insensitive), остальные (ftp/file/
+ * javascript) reject'ит как [ValidationException]. Это закрывает два бага
+ * одновременно:
+ *  - `HTTPS://...` (uppercase) раньше не матчился и нормализовывался в
+ *    `https://HTTPS://...` (повреждённое значение);
+ *  - `ftp://...` раньше не матчило и prepend'илось `https://ftp://...`.
  *
- * Не валидирует сам URL — только добавляет схему. Полную проверку делает
- * validateUrl + PreviewService.normalizeUrl (https-only, egress constraints).
+ * Применять ДО validate() — она тоже требует http(s)://, но видит уже
+ * нормализованное/провалидированное значение.
  */
 fun normalizeWishUrl(raw: String?): String? {
     if (raw == null) return null
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-    return "https://$trimmed"
+    // Scheme detection — case-insensitive. Регэксп покрывает scheme:// prefix.
+    val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").find(trimmed)
+    return when {
+        schemeMatch == null -> "https://$trimmed" // schemeless → добавляем
+        schemeMatch.value.lowercase() in setOf("http://", "https://") -> trimmed // ок
+        else -> throw ValidationException("URL должен использовать схему http:// или https://")
+    }
 }
 
 /**
