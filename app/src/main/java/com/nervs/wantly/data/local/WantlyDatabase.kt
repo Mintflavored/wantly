@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -61,6 +61,21 @@ abstract class WantlyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 3→4: добавлен wishes.textDirty (BOOLEAN DEFAULT 0).
+         *
+         * Гранулярный dirty-флаг для разделения full PATCH (полевые правки) и
+         * узкого PATCH /status (cycle-status). Без него push всегда слал бы
+         * полный PATCH и перезаписывал field-правки других клиентов при cycle-status.
+         * Существующие строки получают textDirty=0 — корректно: всё, что уже в Room,
+         * либо synced, либо помечено status-only изменением через updateStatus.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishes ADD COLUMN textDirty INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** Маркер в DataStore, что backfill ownerEmail после миграции выполнен. */
         const val BACKFILL_KEY = "v3_owner_backfill_done"
 
@@ -71,7 +86,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

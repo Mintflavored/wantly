@@ -44,6 +44,13 @@ data class CreateWishlistRequest(
     val coverColor: Int = 0,
 )
 
+@Serializable
+data class UpdateWishlistRequest(
+    val title: String,
+    val description: String? = null,
+    val coverColor: Int = 0,
+)
+
 // ── Wish ──────────────────────────────────────────────
 
 @Serializable
@@ -75,6 +82,18 @@ data class CreateWishRequest(
 @Serializable
 data class UpdateWishStatusRequest(
     val status: String,
+)
+
+@Serializable
+data class UpdateWishRequest(
+    val title: String,
+    val description: String? = null,
+    val url: String? = null,
+    val imageUrl: String? = null,
+    val price: Double? = null,
+    val currency: String = "RUB",
+    val storeName: String? = null,
+    val status: String? = null,
 )
 
 // ── Link preview ──────────────────────────────────────

@@ -55,6 +55,57 @@ fun Route.wishRoutes() {
 
         route("/api/wishes/{id}") {
 
+            // Общий PATCH — редактирование полей желания (PUT-стиль: перезаписываем
+            // все редактируемые поля). status сюда НЕ входит — у него свой узкий
+            // PATCH /status ниже (быстрая кнопка в UI). ownership через join с
+            // Wishlists.ownerId → 404 если чужой.
+            patch {
+                val uid = call.userId()!!
+                val wishId = call.parameters["id"]?.toLongOrNull()
+                    ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
+                val req = call.receive<UpdateWishRequest>()
+                val owns = dbQuery {
+                    (Wishes innerJoin Wishlists)
+                        .selectAll().where { (Wishes.id eq wishId) and (Wishlists.ownerId eq uid) }
+                        .count() > 0
+                }
+                if (!owns) return@patch call.respond(HttpStatusCode.NotFound, ErrorResponse("Желание не найдено"))
+                dbQuery {
+                    Wishes.update({ Wishes.id eq wishId }) {
+                        it[title] = req.title.trim()
+                        it[description] = req.description?.trim()
+                        it[url] = req.url?.trim()
+                        it[imageUrl] = req.imageUrl?.trim()
+                        it[price] = req.price
+                        it[currency] = req.currency
+                        it[storeName] = req.storeName?.trim()
+                        // status optional: если передан — обновляем (общий PATCH из
+                        // sync-engine шлёт status всегда). Узкий PATCH /status отдельно.
+                        req.status?.let { s -> it[status] = s }
+                    }
+                }
+                // Перечитываем, чтобы вернуть актуальный статус (он не менялся) и поля.
+                val row = dbQuery {
+                    (Wishes innerJoin Wishlists)
+                        .selectAll().where { Wishes.id eq wishId }.single()
+                }
+                call.respond(
+                    HttpStatusCode.OK,
+                    WishDto(
+                        id = row[Wishes.id],
+                        wishlistId = row[Wishes.wishlistId],
+                        title = row[Wishes.title],
+                        description = row[Wishes.description],
+                        url = row[Wishes.url],
+                        imageUrl = row[Wishes.imageUrl],
+                        price = row[Wishes.price],
+                        currency = row[Wishes.currency],
+                        storeName = row[Wishes.storeName],
+                        status = row[Wishes.status],
+                    ),
+                )
+            }
+
             patch("/status") {
                 val uid = call.userId()!!
                 val wishId = call.parameters["id"]?.toLongOrNull()

@@ -36,6 +36,14 @@ class WishlistDetailViewModel(
         }
     }
 
+    /** Редактирование названия/описания/цвета списка → локально + push PATCH. */
+    fun updateWishlist(wishlist: WishlistEntity, title: String, description: String?, coverColor: Int) {
+        viewModelScope.launch {
+            repository.updateWishlist(wishlist, title, description, coverColor)
+            syncManager.pushPendingScoped()
+        }
+    }
+
     fun deleteWish(wish: WishEntity) {
         viewModelScope.launch {
             repository.deleteWish(wish)

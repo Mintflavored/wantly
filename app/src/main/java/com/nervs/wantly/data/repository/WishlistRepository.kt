@@ -50,6 +50,21 @@ class WishlistRepository(
         )
     }
 
+    /**
+     * Обновляет редактируемые поля wishlist локально с synced=false → SyncManager
+     * отправит PATCH. Partial update — НЕ трогает serverId/createdAt/ownerEmail,
+     * чтобы не затереть метаданные, которые background-sync мог обновить пока
+     * UI держал устаревший snapshot (например свежий serverId для нового списка).
+     */
+    suspend fun updateWishlist(
+        wishlist: WishlistEntity,
+        title: String,
+        description: String?,
+        coverColor: Int,
+    ) {
+        wishlistDao.updateEditableFields(wishlist.id, title, description, coverColor)
+    }
+
     suspend fun deleteWishlist(wishlist: WishlistEntity) {
         wishlistDao.markDeleted(wishlist.id)
     }
@@ -70,6 +85,30 @@ class WishlistRepository(
                 synced = false,
                 ownerEmail = owner,
             ),
+        )
+    }
+
+    /** Загружает wish по local id — для prefill в edit-mode. */
+    suspend fun getWish(id: Long): WishEntity? = wishDao.getById(id)
+
+    /**
+     * Обновляет редактируемые поля wish локально с synced=false → SyncManager
+     * отправит PATCH. Partial update — НЕ трогает serverId/wishlistId/status/
+     * sortOrder/createdAt/ownerEmail, чтобы не затереть метаданные, которые
+     * background-sync мог обновить пока UI держал устаревший snapshot
+     * (например свежий serverId для нового wish — иначе он откатился бы в null
+     * и след. push создал дубль на сервере).
+     */
+    suspend fun updateWish(wish: WishEntity, draft: WishDraft) {
+        wishDao.updateEditableFields(
+            id = wish.id,
+            title = draft.title,
+            description = draft.description,
+            url = draft.url,
+            imageUrl = draft.imageUrl,
+            price = draft.price,
+            currency = draft.currency,
+            storeName = draft.storeName,
         )
     }
 

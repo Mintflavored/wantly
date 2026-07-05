@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nervs.wantly.R
 import com.nervs.wantly.data.local.WishlistWithCount
 import com.nervs.wantly.data.local.entity.WishlistEntity
+import com.nervs.wantly.ui.components.WishlistFormDialog
 import com.nervs.wantly.ui.rememberAppViewModel
 import com.nervs.wantly.ui.theme.WishlistAccents
 
@@ -119,9 +120,11 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
     }
 
     if (showCreate) {
-        CreateWishlistDialog(
+        WishlistFormDialog(
+            titleRes = R.string.dialog_new_list_title,
+            confirmLabelRes = R.string.action_create,
             onDismiss = { showCreate = false },
-            onCreate = { title, description, color ->
+            onConfirm = { title, description, color ->
                 vm.createWishlist(title, description, color)
                 showCreate = false
             },
@@ -227,66 +230,6 @@ private fun EmptyHome(modifier: Modifier = Modifier) {
             textAlign = TextAlign.Center,
         )
     }
-}
-
-@Composable
-private fun CreateWishlistDialog(
-    onDismiss: () -> Unit,
-    onCreate: (title: String, description: String, color: Int) -> Unit,
-) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var selectedColor by remember { mutableIntStateOf(0) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_new_list_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text(stringResource(R.string.field_title)) },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text(stringResource(R.string.field_description_optional)) },
-                    singleLine = true,
-                )
-                Text(
-                    stringResource(R.string.label_color),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    WishlistAccents.forEachIndexed { index, color ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(color)
-                                .clickable { selectedColor = index },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (selectedColor == index) {
-                                Icon(Icons.Default.Check, null, tint = Color.White)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onCreate(title.trim(), description, selectedColor) },
-                enabled = title.isNotBlank(),
-            ) { Text(stringResource(R.string.action_create)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        },
-    )
 }
 
 @Composable

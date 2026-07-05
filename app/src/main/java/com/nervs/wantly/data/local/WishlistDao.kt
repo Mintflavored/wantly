@@ -43,6 +43,28 @@ interface WishlistDao {
     @Query("UPDATE wishlists SET pendingDelete = 1, synced = 0 WHERE id = :id")
     suspend fun markDeleted(id: Long)
 
+    /**
+     * Partial update: только редактируемые поля + synced=0. Не трогает serverId,
+     * createdAt, ownerEmail, isShared — защита от race, когда сущность устарела
+     * относительно Room (например background-sync уже проставил serverId).
+     */
+    @Query(
+        """
+        UPDATE wishlists SET
+            title = :title,
+            description = :description,
+            coverColor = :coverColor,
+            synced = 0
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateEditableFields(
+        id: Long,
+        title: String,
+        description: String?,
+        coverColor: Int,
+    )
+
     // ── Sync helpers ──────────────────────────────────────
 
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 0")
@@ -63,17 +85,79 @@ interface WishlistDao {
     suspend fun setServerId(localId: Long, serverId: Long)
 
     /**
-     * Привязывает serverId (всегда), но помечает synced — только если нет pendingDelete.
-     * serverId сохраняется ВСЕГДА, чтобы следующий push мог DELETE, а не терять ссылку.
+     * Привязывает serverId (всегда), но помечает synced — только если нет pendingDelete
+     * И ни одно PATCH-поле не изменилось с момента POST. serverId сохраняется ВСЕГДА,
+     * чтобы следующий push мог PATCH/DELETE, а не терять ссылку.
+     *
+     * Snapshot-проверка защищает от race: пока POST в полёте, пользователь мог
+     * отредактировать title/description/color — безусловный synced=1 затёр бы
+     * dirty flag, и edit потерялся бы (pull перетёр бы локал серверным POST-состоянием).
      */
-    @Query("UPDATE wishlists SET serverId = :serverId, synced = CASE WHEN pendingDelete = 0 THEN 1 ELSE 0 END WHERE id = :localId")
-    suspend fun setServerIdPreservingDirty(localId: Long, serverId: Long)
+    @Query(
+        """
+        UPDATE wishlists SET
+            serverId = :serverId,
+            synced = CASE
+                WHEN pendingDelete = 0
+                     AND title = :expectedTitle
+                     AND (description IS :expectedDescription)
+                     AND coverColor = :expectedCoverColor
+                THEN 1
+                ELSE 0
+            END
+        WHERE id = :localId
+        """,
+    )
+    suspend fun setServerIdPreservingDirty(
+        localId: Long,
+        serverId: Long,
+        expectedTitle: String,
+        expectedCoverColor: Int,
+        expectedDescription: String?,
+    )
 
     @Query("UPDATE wishlists SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
 
+    /**
+     * Помечает wishlist synced только если ни одно PATCH-поле не изменилось и
+     * нет pendingDelete. Защита от race: пока PATCH в полёте, пользователь мог
+     * отредактировать поля или удалить список — безусловный markSynced затёр бы
+     * dirty flag, и второй edit потерялся бы навсегда.
+     *
+     * Проверяем именно те поля, что едут в UpdateWishlistRequest.
+     */
+    @Query(
+        """
+        UPDATE wishlists SET synced = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND coverColor = :expectedCoverColor
+        """,
+    )
+    suspend fun markSyncedIfUnchanged(
+        id: Long,
+        expectedTitle: String,
+        expectedCoverColor: Int,
+        expectedDescription: String?,
+    )
+
     @Query("DELETE FROM wishlists WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /**
+     * Partial detach: сбрасывает только serverId и помечает dirty. НЕ трогает
+     * pendingDelete и редактируемые поля. Защита от race: SyncManager вызовет
+     * это с устаревшим snapshot (захваченным до PATCH), а full-row update через
+     * copy() затёр бы более новое состояние — например pendingDelete=true от
+     * юзера, удалившего список пока PATCH был в полёте (тогда drain POSTнул бы
+     * список вместо DELETE). Также не трогает clean-поля, чтобы concurrent edit
+     * не откатывался.
+     */
+    @Query("UPDATE wishlists SET serverId = NULL, synced = 0 WHERE id = :id")
+    suspend fun detachServerId(id: Long)
 
     @Query("DELETE FROM wishlists")
     suspend fun clearAll()

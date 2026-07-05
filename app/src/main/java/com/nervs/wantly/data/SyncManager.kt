@@ -9,6 +9,8 @@ import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishlistRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -325,11 +327,17 @@ class SyncManager(
         wishDao: com.nervs.wantly.data.local.WishDao,
         wishlist: WishlistEntity,
     ) {
-        listDao.update(wishlist.copy(serverId = null, synced = false))
+        // Partial detach: сбрасываем только serverId/synced, не трогая pendingDelete
+        // и редактируемые поля. SyncManager держит устаревший snapshot (захвачен до
+        // PATCH), а full-row update через copy() затёр бы более новое состояние —
+        // например pendingDelete=true от юзера, удалившего список пока PATCH летел:
+        // тогда drain POSTнул бы список вместо DELETE. Аналогично для детей.
+        listDao.detachServerId(wishlist.id)
         for (wish in wishDao.getAll().filter { it.wishlistId == wishlist.id }) {
             when {
+                // Tombstone без serverId отправлять некуда — чистим окончательно.
                 wish.pendingDelete -> wishDao.deleteById(wish.id)
-                else -> wishDao.update(wish.copy(serverId = null, synced = false))
+                else -> wishDao.detachServerId(wish.id)
             }
         }
     }
@@ -361,11 +369,60 @@ class SyncManager(
                 val remote = apiCall {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
                 } ?: continue
-                // serverId сохраняется ВСЕГДА; synced — только если нет pendingDelete.
-                // Даже если список удалён во время POST, мы знаем serverId для DELETE.
-                listDao.setServerIdPreservingDirty(list.id, remote.id)
+                // serverId сохраняется ВСЕГДА; synced — только если PATCH-поля не
+                // изменились и нет pendingDelete. Даже если список удалён или
+                // отредактирован во время POST, мы знаем serverId для PATCH/DELETE.
+                // Snapshot из list (захвачен до POST) — если юзер редактировал поля
+                // пока POST в полёте, row останется dirty для follow-up PATCH.
+                listDao.setServerIdPreservingDirty(
+                    localId = list.id,
+                    serverId = remote.id,
+                    expectedTitle = list.title,
+                    expectedCoverColor = list.coverColor,
+                    expectedDescription = list.description,
+                )
+            } else {
+                // Существующая — PATCH (PUT-стиль: все редактируемые поля).
+                // Захватываем снапшот до PATCH для условного markSynced — иначе
+                // второй edit в полёте потерялся бы (status-only проверки мало).
+                val patchResult = runCatching {
+                    api.updateWishlist(
+                        list.serverId,
+                        UpdateWishlistRequest(list.title, list.description, list.coverColor),
+                    )
+                }
+                if (patchResult.isSuccess) {
+                    // Условный markSynced: только если PATCH-поля не изменились и
+                    // нет tombstone. Пока PATCH в полёте, пользователь мог
+                    // отредактировать список или удалить его.
+                    listDao.markSyncedIfUnchanged(
+                        list.id,
+                        expectedTitle = list.title,
+                        expectedCoverColor = list.coverColor,
+                        expectedDescription = list.description,
+                    )
+                } else {
+                    val err = patchResult.exceptionOrNull()
+                    if (err is ApiException) when (err.code) {
+                        401 -> lastSyncSaw401 = true
+                        404 -> {
+                            // Список удалён на сервере (другой клиент). Без отсоединения
+                            // serverId следующий push снова получит 404 и зависнет;
+                            // pullInternal пропускает dirty lists → вечный ретрай, а
+                            // pushPendingVerifiedForLogout заблокирует logout.
+                            // Отсоединяем parent И детей: clean дети иначе сохранили бы
+                            // устаревший serverId и потерялись при следующем pull (orphan).
+                            // Логика идентична wish-ветке createWish 404 и pull-recreate.
+                            detachParentAndChildren(listDao, wishDao, list)
+                            // Планируем drain pass — иначе freshly-detached list/дети
+                            // останутся unsynced и pushPendingVerifiedForLogout заблокирует
+                            // logout. Outer pushPending/pushAndDrain loop POSTнет в след.витке.
+                            pushPendingScheduled.set(true)
+                        }
+                    }
+                    // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
+                }
             }
-            // UPDATE для существующих — в Фазе 4 (редактирование списков)
         }
 
         // 3. CREATE/UPDATE wishes
@@ -412,17 +469,77 @@ class SyncManager(
                 } catch (e: Exception) {
                     continue
                 }
-                // serverId сохраняется ВСЕГДА; synced — только если статус не изменился
-                // и нет pendingDelete. Если статус изменился — следующий push PATCHит.
-                // Если удалён — следующий push DELETE по serverId.
-                wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
+                // serverId сохраняется ВСЕГДА; synced — только если ни одно PATCH-поле
+                // не изменилось и нет pendingDelete. Snapshot из wish (захвачен до POST):
+                // если юзер редактировал поля пока POST в полёте, row останется dirty
+                // для follow-up PATCH. Если удалён — следующий push DELETE по serverId.
+                wishDao.setServerIdPreservingDirty(
+                    localId = wish.id,
+                    serverId = remote.id,
+                    expectedTitle = wish.title,
+                    expectedDescription = wish.description,
+                    expectedUrl = wish.url,
+                    expectedImageUrl = wish.imageUrl,
+                    expectedPrice = wish.price,
+                    expectedCurrency = wish.currency,
+                    expectedStoreName = wish.storeName,
+                    expectedStatus = wish.status,
+                )
             } else {
-                // Существующая — PATCH статуса
-                val patchResult = runCatching { api.updateWishStatus(wishServerId, wish.status) }
+                // Существующая wish. Разделяем по textDirty: полевые правки требуют
+                // полного PATCH, а cycle-status должен идти узким PATCH /status, чтобы
+                // не перезаписывать field-правки других клиентов на устаревшем устройстве.
+                val patchResult = if (wish.textDirty) {
+                    runCatching {
+                        api.updateWish(
+                            wishServerId,
+                            UpdateWishRequest(
+                                title = wish.title,
+                                description = wish.description,
+                                url = wish.url,
+                                imageUrl = wish.imageUrl,
+                                price = wish.price,
+                                currency = wish.currency,
+                                storeName = wish.storeName,
+                                // status едёт в общем PATCH — иначе cycle-status при
+                                // одновременной полевой правке не синхронизировался бы.
+                                status = wish.status,
+                            ),
+                        )
+                    }
+                } else {
+                    // textDirty=false → только status изменился (cycle-status chip).
+                    // Узкий PATCH /status не трогает чужие field-правки.
+                    runCatching { api.updateWishStatus(wishServerId, wish.status) }
+                }
                 if (patchResult.isSuccess) {
-                    // Условный markSynced: только если статус не изменился и нет tombstone.
-                    // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
-                    wishDao.markSyncedIfUnchanged(wish.id, wish.status)
+                    if (wish.textDirty) {
+                        // Сбрасываем textDirty + условный markSynced по полному snapshot.
+                        wishDao.clearTextDirtyIfUnchanged(
+                            id = wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
+                    } else {
+                        // status-only PATCH — обычный markSyncedIfUnchanged по snapshot.
+                        wishDao.markSyncedIfUnchanged(
+                            id = wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
+                    }
                 } else {
                     val err = patchResult.exceptionOrNull()
                     if (err is ApiException) when (err.code) {
@@ -430,8 +547,10 @@ class SyncManager(
                         404 -> {
                             // Wish удалён на сервере (другой клиент). Без отсоединения
                             // serverId следующий push снова получит 404 и зависнет.
-                            // Сбрасываем → следующий push POSTит под текущим parent.
-                            wishDao.update(wish.copy(serverId = null, synced = false))
+                            // Partial detach: сбрасываем только serverId/synced, не
+                            // затирая textDirty/pendingDelete/поля (см. аналог для
+                            // wishlist выше). → следующий push POSTит под текущим parent.
+                            wishDao.detachServerId(wish.id)
                             // Планируем drain pass — иначе freshly-detached wish
                             // останется unsynced и pushPendingVerifiedForLogout
                             // заблокирует logout. Outer loop POSTнет в следующем витке.

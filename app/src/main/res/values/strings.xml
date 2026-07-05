@@ -20,11 +20,14 @@
 
     <!-- Создание списка -->
     <string name="dialog_new_list_title">Новый список</string>
+    <string name="dialog_edit_list_title">Изменить список</string>
     <string name="field_title">Название</string>
     <string name="field_description_optional">Описание (необязательно)</string>
     <string name="label_color">Цвет</string>
     <string name="action_create">Создать</string>
+    <string name="action_save">Сохранить</string>
     <string name="action_cancel">Отмена</string>
+    <string name="cd_edit_wishlist">Изменить список</string>
 
     <!-- Экран списка -->
     <string name="wishes_empty_title">Здесь пока пусто</string>
@@ -32,6 +35,7 @@
 
     <!-- Добавление желания -->
     <string name="add_wish_title">Новое желание</string>
+    <string name="edit_wish_title">Изменить желание</string>
     <string name="add_wish_link_section">Ссылка на товар</string>
     <string name="field_url_hint">https://…</string>
     <string name="add_wish_parsing">Распознаю…</string>
@@ -43,6 +47,7 @@
     <string name="field_image_url">Ссылка на фото</string>
     <string name="field_note">Заметка</string>
     <string name="action_add_to_list">Добавить в список</string>
+    <string name="cd_edit">Изменить</string>
 
     <!-- Ошибки распознавания ссылки -->
     <string name="error_invalid_url">Похоже, это не ссылка. Проверьте адрес.</string>
