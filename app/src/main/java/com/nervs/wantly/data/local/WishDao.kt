@@ -71,12 +71,39 @@ interface WishDao {
     suspend fun markSynced(id: Long)
 
     /**
-     * Помечает wish synced только если статус не изменился и нет pendingDelete.
-     * Защита от race: пока PATCH в полёте, пользователь мог изменить
-     * статус или удалить wish — безусловный markSynced затёр бы dirty flag.
+     * Помечает wish synced только если ни одно PATCH-поле не изменилось и
+     * нет pendingDelete. Защита от race: пока PATCH в полёте, пользователь мог
+     * отредактировать любые поля или удалить wish — безусловный markSynced (или
+     * проверка только status) затёр бы dirty flag, и второй edit потерялся бы.
+     *
+     * Проверяем именно те поля, что едут в UpdateWishRequest.
      */
-    @Query("UPDATE wishes SET synced = 1 WHERE id = :id AND status = :expectedStatus AND pendingDelete = 0")
-    suspend fun markSyncedIfUnchanged(id: Long, expectedStatus: String)
+    @Query(
+        """
+        UPDATE wishes SET synced = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND (url IS :expectedUrl)
+          AND (imageUrl IS :expectedImageUrl)
+          AND (price IS :expectedPrice)
+          AND currency = :expectedCurrency
+          AND (storeName IS :expectedStoreName)
+          AND status = :expectedStatus
+        """,
+    )
+    suspend fun markSyncedIfUnchanged(
+        id: Long,
+        expectedTitle: String,
+        expectedDescription: String?,
+        expectedUrl: String?,
+        expectedImageUrl: String?,
+        expectedPrice: Double?,
+        expectedCurrency: String,
+        expectedStoreName: String?,
+        expectedStatus: String,
+    )
 
     @Query("DELETE FROM wishes WHERE id = :id")
     suspend fun deleteById(id: Long)

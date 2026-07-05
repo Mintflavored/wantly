@@ -368,16 +368,42 @@ class SyncManager(
                 listDao.setServerIdPreservingDirty(list.id, remote.id)
             } else {
                 // Существующая — PATCH (PUT-стиль: все редактируемые поля).
-                val ok = apiCall {
+                // Захватываем снапшот до PATCH для условного markSynced — иначе
+                // второй edit в полёте потерялся бы (status-only проверки мало).
+                val patchResult = runCatching {
                     api.updateWishlist(
                         list.serverId,
                         UpdateWishlistRequest(list.title, list.description, list.coverColor),
                     )
                 }
-                if (ok != null) listDao.markSynced(list.id)
-                // 404 от сервера (список удалён на другом клиенте) не отсоединяем
-                // здесь — пользователь потерял бы локальные данные. Оставляем dirty,
-                // следующий pull принесёт актуальное состояние сервера.
+                if (patchResult.isSuccess) {
+                    // Условный markSynced: только если PATCH-поля не изменились и
+                    // нет tombstone. Пока PATCH в полёте, пользователь мог
+                    // отредактировать список или удалить его.
+                    listDao.markSyncedIfUnchanged(
+                        list.id,
+                        expectedTitle = list.title,
+                        expectedCoverColor = list.coverColor,
+                        expectedDescription = list.description,
+                    )
+                } else {
+                    val err = patchResult.exceptionOrNull()
+                    if (err is ApiException) when (err.code) {
+                        401 -> lastSyncSaw401 = true
+                        404 -> {
+                            // Список удалён на сервере (другой клиент). Без отсоединения
+                            // serverId следующий push снова получит 404 и зависнет;
+                            // pullInternal пропускает dirty lists → вечный ретрай, а
+                            // pushPendingVerifiedForLogout заблокирует logout. Сбрасываем
+                            // serverId → следующий push POSTнет локальное состояние заново.
+                            listDao.update(list.copy(serverId = null, synced = false))
+                            // Планируем drain pass — иначе freshly-detached list останется
+                            // unsynced и pushPendingVerifiedForLogout заблокирует logout.
+                            pushPendingScheduled.set(true)
+                        }
+                    }
+                    // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
+                }
             }
         }
 
@@ -430,9 +456,8 @@ class SyncManager(
                 // Если удалён — следующий push DELETE по serverId.
                 wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
             } else {
-                // Существующая — PATCH (PUT-стиль: все редактируемые поля, status
-                // остаётся серверным, т.к. не входит в UpdateWishRequest). Узкий
-                // updateWishStatus больше не нужен в push — все поля едут одним PATCH.
+                // Существующая — PATCH (PUT-стиль: все редактируемые поля + status
+                // одним запросом). Узкий updateWishStatus больше не нужен в push.
                 val patchResult = runCatching {
                     api.updateWish(
                         wishServerId,
@@ -452,11 +477,22 @@ class SyncManager(
                     )
                 }
                 if (patchResult.isSuccess) {
-                    // Условный markSynced: только если статус не изменился и нет tombstone.
-                    // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
-                    //Race по текстовым полям допускаем (no live users) — следующий push
-                    //отправит новое состояние, т.к. row останется dirty.
-                    wishDao.markSyncedIfUnchanged(wish.id, wish.status)
+                    // Условный markSynced: только если ни одно PATCH-поле не изменилось
+                    // и нет tombstone. Пока PATCH в полёте, пользователь мог отредактировать
+                    // любые поля или удалить wish. status-only проверки недостаточно:
+                    // текст/цена/URL меняются чаще без смены status — иначе второй edit
+                    // молча терялся бы (dirty flag затирался).
+                    wishDao.markSyncedIfUnchanged(
+                        id = wish.id,
+                        expectedTitle = wish.title,
+                        expectedDescription = wish.description,
+                        expectedUrl = wish.url,
+                        expectedImageUrl = wish.imageUrl,
+                        expectedPrice = wish.price,
+                        expectedCurrency = wish.currency,
+                        expectedStoreName = wish.storeName,
+                        expectedStatus = wish.status,
+                    )
                 } else {
                     val err = patchResult.exceptionOrNull()
                     if (err is ApiException) when (err.code) {

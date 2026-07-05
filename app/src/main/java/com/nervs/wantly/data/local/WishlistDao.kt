@@ -72,6 +72,31 @@ interface WishlistDao {
     @Query("UPDATE wishlists SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
 
+    /**
+     * Помечает wishlist synced только если ни одно PATCH-поле не изменилось и
+     * нет pendingDelete. Защита от race: пока PATCH в полёте, пользователь мог
+     * отредактировать поля или удалить список — безусловный markSynced затёр бы
+     * dirty flag, и второй edit потерялся бы навсегда.
+     *
+     * Проверяем именно те поля, что едут в UpdateWishlistRequest.
+     */
+    @Query(
+        """
+        UPDATE wishlists SET synced = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND coverColor = :expectedCoverColor
+        """,
+    )
+    suspend fun markSyncedIfUnchanged(
+        id: Long,
+        expectedTitle: String,
+        expectedCoverColor: Int,
+        expectedDescription: String?,
+    )
+
     @Query("DELETE FROM wishlists WHERE id = :id")
     suspend fun deleteById(id: Long)
 

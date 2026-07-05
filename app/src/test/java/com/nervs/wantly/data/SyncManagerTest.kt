@@ -227,6 +227,66 @@ class SyncManagerTest {
         assertThat(db.wishDao().getById(10)!!.synced).isTrue()
     }
 
+    // ── Regression: markSynced не должен затирать dirty flag второго edit ────
+    // (codex P2 — "Do not clear newer wish edits after PATCH")
+    @Test
+    fun `pushPending wish PATCH does not clear newer text edit in flight`() = runTest {
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 10, wishlistId = 1, title = "Old", serverId = 500, synced = true),
+        )
+        fakeApi.seed(
+            WishlistDto(id = 100, title = "L"),
+            listOf(
+                com.nervs.wantly.data.remote.dto.WishDto(
+                    id = 500, wishlistId = 100, title = "Old", status = "WANTED",
+                ),
+            ),
+        )
+
+        // Юзер меняет title → dirty → push (PATCH в полёте)
+        val firstEdit = db.wishDao().getById(10)!!
+        db.wishDao().update(firstEdit.copy(title = "First edit", synced = false))
+
+        sync.pushPending()
+
+        // Пока PATCH был в полёте, симулируем второй edit (price/status те же).
+        // Без snapshot-aware markSynced dirty flag затёрся бы и edit потерялся.
+        val afterFirstPush = db.wishDao().getById(10)!!
+        db.wishDao().update(afterFirstPush.copy(title = "Second edit", synced = false))
+
+        sync.pushPending()
+
+        // Сервер получил второй edit (не остался висеть в dirty-limbo).
+        assertThat(fakeApi.wish(500)!!.title).isEqualTo("Second edit")
+        assertThat(db.wishDao().getById(10)!!.synced).isTrue()
+    }
+
+    // ── Regression: wishlist PATCH 404 должен отсоединять serverId ──────────
+    // (codex P2 — "Detach lists when PATCH returns 404")
+    @Test
+    fun `pushPending wishlist PATCH 404 detaches serverId and recreates via POST`() = runTest {
+        // Список есть локально с serverId=100, но удалён на сервере → PATCH 404.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = false),
+        )
+        // fakeApi НЕ seed'ит list 100 → updateWishlist бросит 404.
+
+        sync.pushPending()
+
+        // pushPending крутит drain-loop: на 404 сбрасывает serverId и сразу
+        // POST'ит локальное состояние в том же вызове → список воссоздан
+        // с новым serverId (не 100) и помечен synced.
+        val saved = db.wishlistDao().getById(1)!!
+        assertThat(saved.serverId).isNotNull()
+        assertThat(saved.serverId).isNotEqualTo(100L)
+        assertThat(saved.synced).isTrue()
+        assertThat(fakeApi.wishlistIds()).containsExactly(saved.serverId)
+        assertThat(fakeApi.wishlist(saved.serverId!!)!!.title).isEqualTo("L")
+    }
+
     @Test
     fun `pushPending sends tombstone DELETE to server when row exists remotely`() = runTest {
         db.wishlistDao().insertWithId(
