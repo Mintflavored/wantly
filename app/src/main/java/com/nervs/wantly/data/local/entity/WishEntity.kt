@@ -41,4 +41,11 @@ data class WishEntity(
     @ColumnInfo(name = "pendingDelete", defaultValue = "0") val pendingDelete: Boolean = false,
     /** Email аккаунта-владельца (см. [WishlistEntity.ownerEmail]). */
     @ColumnInfo(name = "ownerEmail") val ownerEmail: String? = null,
+    /**
+     * true = локально изменены текстовые/полевые правки (title/url/price/etc.),
+     * отличные от status. Push шлёт полный PATCH только когда textDirty=true;
+     * иначе — узкий PATCH /status (не перезаписывает field-правки других клиентов).
+     * Сбрасывается после успешного full PATCH. updateStatus НЕ трогает этот флаг.
+     */
+    @ColumnInfo(name = "textDirty", defaultValue = "0") val textDirty: Boolean = false,
 )

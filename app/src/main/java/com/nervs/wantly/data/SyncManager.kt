@@ -486,43 +486,60 @@ class SyncManager(
                     expectedStatus = wish.status,
                 )
             } else {
-                // Существующая — PATCH (PUT-стиль: все редактируемые поля + status
-                // одним запросом). Узкий updateWishStatus больше не нужен в push.
-                val patchResult = runCatching {
-                    api.updateWish(
-                        wishServerId,
-                        UpdateWishRequest(
-                            title = wish.title,
-                            description = wish.description,
-                            url = wish.url,
-                            imageUrl = wish.imageUrl,
-                            price = wish.price,
-                            currency = wish.currency,
-                            storeName = wish.storeName,
-                            // status включён в общий PATCH — иначе UI-кнопка cycle-status
-                            // перестала бы синхронизироваться. Узкий /status endpoint
-                            // остаётся для будущих оптимизаций, но push шлёт всё одним PATCH.
-                            status = wish.status,
-                        ),
-                    )
+                // Существующая wish. Разделяем по textDirty: полевые правки требуют
+                // полного PATCH, а cycle-status должен идти узким PATCH /status, чтобы
+                // не перезаписывать field-правки других клиентов на устаревшем устройстве.
+                val patchResult = if (wish.textDirty) {
+                    runCatching {
+                        api.updateWish(
+                            wishServerId,
+                            UpdateWishRequest(
+                                title = wish.title,
+                                description = wish.description,
+                                url = wish.url,
+                                imageUrl = wish.imageUrl,
+                                price = wish.price,
+                                currency = wish.currency,
+                                storeName = wish.storeName,
+                                // status едёт в общем PATCH — иначе cycle-status при
+                                // одновременной полевой правке не синхронизировался бы.
+                                status = wish.status,
+                            ),
+                        )
+                    }
+                } else {
+                    // textDirty=false → только status изменился (cycle-status chip).
+                    // Узкий PATCH /status не трогает чужие field-правки.
+                    runCatching { api.updateWishStatus(wishServerId, wish.status) }
                 }
                 if (patchResult.isSuccess) {
-                    // Условный markSynced: только если ни одно PATCH-поле не изменилось
-                    // и нет tombstone. Пока PATCH в полёте, пользователь мог отредактировать
-                    // любые поля или удалить wish. status-only проверки недостаточно:
-                    // текст/цена/URL меняются чаще без смены status — иначе второй edit
-                    // молча терялся бы (dirty flag затирался).
-                    wishDao.markSyncedIfUnchanged(
-                        id = wish.id,
-                        expectedTitle = wish.title,
-                        expectedDescription = wish.description,
-                        expectedUrl = wish.url,
-                        expectedImageUrl = wish.imageUrl,
-                        expectedPrice = wish.price,
-                        expectedCurrency = wish.currency,
-                        expectedStoreName = wish.storeName,
-                        expectedStatus = wish.status,
-                    )
+                    if (wish.textDirty) {
+                        // Сбрасываем textDirty + условный markSynced по полному snapshot.
+                        wishDao.clearTextDirtyIfUnchanged(
+                            id = wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
+                    } else {
+                        // status-only PATCH — обычный markSyncedIfUnchanged по snapshot.
+                        wishDao.markSyncedIfUnchanged(
+                            id = wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
+                    }
                 } else {
                     val err = patchResult.exceptionOrNull()
                     if (err is ApiException) when (err.code) {
@@ -530,8 +547,10 @@ class SyncManager(
                         404 -> {
                             // Wish удалён на сервере (другой клиент). Без отсоединения
                             // serverId следующий push снова получит 404 и зависнет.
-                            // Сбрасываем → следующий push POSTит под текущим parent.
-                            wishDao.update(wish.copy(serverId = null, synced = false))
+                            // Partial detach: сбрасываем только serverId/synced, не
+                            // затирая textDirty/pendingDelete/поля (см. аналог для
+                            // wishlist выше). → следующий push POSTит под текущим parent.
+                            wishDao.detachServerId(wish.id)
                             // Планируем drain pass — иначе freshly-detached wish
                             // останется unsynced и pushPendingVerifiedForLogout
                             // заблокирует logout. Outer loop POSTнет в следующем витке.

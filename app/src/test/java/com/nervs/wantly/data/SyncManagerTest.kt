@@ -214,15 +214,52 @@ class SyncManagerTest {
             ),
         )
 
-        // Юзер меняет статус → dirty
+        // Юзер меняет статус → dirty (textDirty не выставляется — только status)
         db.wishDao().updateStatus(10, "PURCHASED")
 
         sync.pushPending()
 
-        // Сервер получил PATCH (status едет в общем PATCH)
+        // Сервер получил PATCH /status (узкий — не трогает field-правки других клиентов)
         assertThat(fakeApi.wish(500)!!.status).isEqualTo("PURCHASED")
         // Локальная запись снова synced
         assertThat(db.wishDao().getById(10)!!.synced).isTrue()
+    }
+
+    // ── Regression: cycle-status не должен перезаписывать чужие field-правки ──
+    // (codex P2 — "Preserve remote fields on status-only sync")
+    //
+    // Сценарий: wish есть локально и на сервере. Другой клиент отредактировал
+    // title на сервере ("Remote edited"). Этот юзер только cycle-status жмёт.
+    // textDirty=false → push должен слать узкий /status, НЕ полный PATCH с
+    // устаревшим title="W". Иначе чужая правка затёрлась бы.
+    @Test
+    fun `pushPending cycle-status uses narrow PATCH and does not overwrite remote fields`() = runTest {
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 10, wishlistId = 1, title = "W", serverId = 500, synced = true),
+        )
+        // Локальный title="W" (устаревший — на сервере уже "Remote edited").
+        fakeApi.seed(
+            WishlistDto(id = 100, title = "L"),
+            listOf(
+                com.nervs.wantly.data.remote.dto.WishDto(
+                    id = 500, wishlistId = 100, title = "Remote edited", status = "WANTED",
+                ),
+            ),
+        )
+
+        // Юзер только cycle-status (textDirty не выставляется).
+        db.wishDao().updateStatus(10, "PURCHASED")
+        sync.pushPending()
+
+        // Узкий /status обновил только status; field-правка другого клиента жива.
+        val serverWish = fakeApi.wish(500)!!
+        assertThat(serverWish.status).isEqualTo("PURCHASED")
+        assertThat(serverWish.title).isEqualTo("Remote edited")
+        // textDirty не выставлялся → локальный title не отправлялся как field-правка.
+        assertThat(db.wishDao().getById(10)!!.textDirty).isFalse()
     }
 
     @Test
@@ -273,10 +310,17 @@ class SyncManagerTest {
             ),
         )
 
-        // Юзер редактирует → dirty
-        val existing = db.wishDao().getById(10)!!
-        db.wishDao().update(
-            existing.copy(url = "https://shop.example/item", price = 1999.0, synced = false),
+        // Юзер редактирует → dirty + textDirty (через Repository.updateWish / DAO
+        // updateEditableFields). Push шлёт полный PATCH, не узкий /status.
+        db.wishDao().updateEditableFields(
+            id = 10,
+            title = "W",
+            description = null,
+            url = "https://shop.example/item",
+            imageUrl = null,
+            price = 1999.0,
+            currency = "RUB",
+            storeName = null,
         )
 
         sync.pushPending()
@@ -285,8 +329,10 @@ class SyncManagerTest {
         val serverWish = fakeApi.wish(500)!!
         assertThat(serverWish.url).isEqualTo("https://shop.example/item")
         assertThat(serverWish.price).isEqualTo(1999.0)
-        // Локальная запись снова synced
-        assertThat(db.wishDao().getById(10)!!.synced).isTrue()
+        // Локальная запись снова synced, textDirty сброшен
+        val saved = db.wishDao().getById(10)!!
+        assertThat(saved.synced).isTrue()
+        assertThat(saved.textDirty).isFalse()
     }
 
     // ── Regression: markSynced не должен затирать dirty flag второго edit ────
@@ -308,16 +354,20 @@ class SyncManagerTest {
             ),
         )
 
-        // Юзер меняет title → dirty → push (PATCH в полёте)
-        val firstEdit = db.wishDao().getById(10)!!
-        db.wishDao().update(firstEdit.copy(title = "First edit", synced = false))
+        // Юзер меняет title → dirty + textDirty → push (PATCH в полёте)
+        db.wishDao().updateEditableFields(
+            id = 10, title = "First edit", description = null, url = null,
+            imageUrl = null, price = null, currency = "RUB", storeName = null,
+        )
 
         sync.pushPending()
 
         // Пока PATCH был в полёте, симулируем второй edit (price/status те же).
         // Без snapshot-aware markSynced dirty flag затёрся бы и edit потерялся.
-        val afterFirstPush = db.wishDao().getById(10)!!
-        db.wishDao().update(afterFirstPush.copy(title = "Second edit", synced = false))
+        db.wishDao().updateEditableFields(
+            id = 10, title = "Second edit", description = null, url = null,
+            imageUrl = null, price = null, currency = "RUB", storeName = null,
+        )
 
         sync.pushPending()
 

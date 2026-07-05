@@ -33,10 +33,11 @@ interface WishDao {
     suspend fun updateStatus(id: Long, status: String)
 
     /**
-     * Partial update: только редактируемые поля + synced=0. Не трогает serverId,
-     * createdAt, ownerEmail, wishlistId — защита от race, когда сущность, которую
-     * видит UI/Repository, устарела относительно Room (например background-sync
-     * уже проставил serverId). Полный @Update через copy() затёр бы эти метаданные.
+     * Partial update: только редактируемые поля + synced=0 + textDirty=1
+     * (маркер, что push должен слать полный PATCH, а не узкий PATCH /status —
+     * иначе cycle-status перезаписал бы эти правки). Не трогает serverId,
+     * createdAt, ownerEmail, wishlistId, status — защита от race, когда сущность,
+     * которую видит UI/Repository, устарела относительно Room.
      */
     @Query(
         """
@@ -48,7 +49,8 @@ interface WishDao {
             price = :price,
             currency = :currency,
             storeName = :storeName,
-            synced = 0
+            synced = 0,
+            textDirty = 1
         WHERE id = :id
         """,
     )
@@ -61,6 +63,42 @@ interface WishDao {
         price: Double?,
         currency: String,
         storeName: String?,
+    )
+
+    /**
+     * Сбрасывает textDirty после успешного полного PATCH. Ставит synced=1 только
+     * если ни одно поле/status не изменилось и нет tombstone (snapshot-aware).
+     */
+    @Query(
+        """
+        UPDATE wishes SET
+            textDirty = 0,
+            synced = CASE
+                WHEN pendingDelete = 0
+                     AND title = :expectedTitle
+                     AND (description IS :expectedDescription)
+                     AND (url IS :expectedUrl)
+                     AND (imageUrl IS :expectedImageUrl)
+                     AND (price IS :expectedPrice)
+                     AND currency = :expectedCurrency
+                     AND (storeName IS :expectedStoreName)
+                     AND status = :expectedStatus
+                THEN 1
+                ELSE 0
+            END
+        WHERE id = :id
+        """,
+    )
+    suspend fun clearTextDirtyIfUnchanged(
+        id: Long,
+        expectedTitle: String,
+        expectedDescription: String?,
+        expectedUrl: String?,
+        expectedImageUrl: String?,
+        expectedPrice: Double?,
+        expectedCurrency: String,
+        expectedStoreName: String?,
+        expectedStatus: String,
     )
 
     @Query("UPDATE wishes SET pendingDelete = 1, synced = 0 WHERE id = :id")
