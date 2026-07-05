@@ -118,6 +118,7 @@ class ApplicationTest {
         val price: Double? = null,
         val currency: String = "RUB",
         val storeName: String? = null,
+        val status: String? = null,
     )
 
     @kotlinx.serialization.Serializable
@@ -387,8 +388,32 @@ class ApplicationTest {
         assertEquals("Edited wish", dto.title)
         assertEquals(250.0, dto.price)
         assertEquals("Shop", dto.storeName)
-        // status не входит в UpdateWishRequest → должен сохраниться.
+        // status optional в UpdateWishRequest: не передан → сохраняется старый.
         assertEquals("RESERVED", dto.status)
+    }
+
+    @Test
+    fun `update wish with status field updates status`() = testApp { client ->
+        val auth = client.register("edit-wish-status@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val created: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", status = "WANTED"))
+        }.body()
+
+        val resp = client.patch("/api/wishes/${created.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishRequest(title = "Wish", status = "PURCHASED"))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val dto: WishDto = resp.body()
+        assertEquals("PURCHASED", dto.status)
     }
 
     @Test

@@ -79,6 +79,9 @@ fun Route.wishRoutes() {
                         it[price] = req.price
                         it[currency] = req.currency
                         it[storeName] = req.storeName?.trim()
+                        // status optional: если передан — обновляем (общий PATCH из
+                        // sync-engine шлёт status всегда). Узкий PATCH /status отдельно.
+                        req.status?.let { s -> it[status] = s }
                     }
                 }
                 // Перечитываем, чтобы вернуть актуальный статус (он не менялся) и поля.
