@@ -2,6 +2,7 @@ package com.nervs.wantly.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.FieldLimits
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.remote.ApiException
@@ -29,9 +30,9 @@ class AuthViewModel(
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState = _uiState.asStateFlow()
 
-    fun onEmailChange(v: String) = update { copy(email = v) }
-    fun onPasswordChange(v: String) = update { copy(password = v) }
-    fun onNameChange(v: String) = update { copy(displayName = v) }
+    fun onEmailChange(v: String) = update { copy(email = FieldLimits.clamp(v, FieldLimits.EMAIL_MAX)) }
+    fun onPasswordChange(v: String) = update { copy(password = v.take(FieldLimits.PASSWORD_MAX)) }
+    fun onNameChange(v: String) = update { copy(displayName = FieldLimits.clamp(v, FieldLimits.DISPLAY_NAME_MAX)) }
 
     /**
      * Перед login/register: убедиться что Room не содержит данных чужого аккаунта.

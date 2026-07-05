@@ -2,6 +2,7 @@ package com.nervs.wantly.ui.screens.addwish
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.FieldLimits
 import com.nervs.wantly.data.GuestCounter
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
@@ -68,15 +69,16 @@ class AddWishViewModel(
         }
     }
 
-    fun onUrlChange(v: String) = update { copy(url = v) }
-    fun onTitleChange(v: String) = update { copy(title = v) }
-    fun onDescriptionChange(v: String) = update { copy(description = v) }
+    fun onUrlChange(v: String) = update { copy(url = FieldLimits.clamp(v, FieldLimits.URL_MAX)) }
+    fun onTitleChange(v: String) = update { copy(title = FieldLimits.clamp(v, FieldLimits.WISH_TITLE_MAX)) }
+    fun onDescriptionChange(v: String) =
+        update { copy(description = FieldLimits.clamp(v, FieldLimits.WISH_DESCRIPTION_MAX)) }
     fun onPriceChange(v: String) = update {
         copy(price = v.filter { it.isDigit() || it == '.' || it == ',' || it == ' ' })
     }
-    fun onCurrencyChange(v: String) = update { copy(currency = v) }
-    fun onStoreChange(v: String) = update { copy(storeName = v) }
-    fun onImageUrlChange(v: String) = update { copy(imageUrl = v) }
+    fun onCurrencyChange(v: String) = update { copy(currency = v.take(3)) }
+    fun onStoreChange(v: String) = update { copy(storeName = FieldLimits.clamp(v, FieldLimits.WISH_STORE_MAX)) }
+    fun onImageUrlChange(v: String) = update { copy(imageUrl = FieldLimits.clamp(v, FieldLimits.URL_MAX)) }
 
     fun recognize() {
         val url = _uiState.value.url.trim()

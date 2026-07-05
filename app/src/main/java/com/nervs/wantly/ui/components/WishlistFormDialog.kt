@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nervs.wantly.R
+import com.nervs.wantly.data.FieldLimits
 import com.nervs.wantly.ui.theme.WishlistAccents
 
 /**
@@ -60,13 +61,13 @@ fun WishlistFormDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = { title = FieldLimits.clamp(it, FieldLimits.WISHLIST_TITLE_MAX) },
                     label = { Text(stringResource(R.string.field_title)) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = description,
-                    onValueChange = { description = it },
+                    onValueChange = { description = FieldLimits.clamp(it, FieldLimits.WISHLIST_DESCRIPTION_MAX) },
                     label = { Text(stringResource(R.string.field_description_optional)) },
                     singleLine = true,
                 )
