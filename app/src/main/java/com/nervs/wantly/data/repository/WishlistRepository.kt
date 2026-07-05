@@ -50,6 +50,26 @@ class WishlistRepository(
         )
     }
 
+    /**
+     * Обновляет поля wishlist локально с synced=false → SyncManager отправит PATCH.
+     * Сохраняет id/serverId/createdAt/ownerEmail/sync-флаги через copy().
+     */
+    suspend fun updateWishlist(
+        wishlist: WishlistEntity,
+        title: String,
+        description: String?,
+        coverColor: Int,
+    ) {
+        wishlistDao.update(
+            wishlist.copy(
+                title = title,
+                description = description,
+                coverColor = coverColor,
+                synced = false,
+            ),
+        )
+    }
+
     suspend fun deleteWishlist(wishlist: WishlistEntity) {
         wishlistDao.markDeleted(wishlist.id)
     }
@@ -69,6 +89,29 @@ class WishlistRepository(
                 status = draft.status.name,
                 synced = false,
                 ownerEmail = owner,
+            ),
+        )
+    }
+
+    /** Загружает wish по local id — для prefill в edit-mode. */
+    suspend fun getWish(id: Long): WishEntity? = wishDao.getById(id)
+
+    /**
+     * Обновляет редактируемые поля wish локально с synced=false → SyncManager
+     * отправит PATCH. Сохраняет wishlistId (без перемещения), status, sortOrder,
+     * id/serverId/createdAt/ownerEmail через copy().
+     */
+    suspend fun updateWish(wish: WishEntity, draft: WishDraft) {
+        wishDao.update(
+            wish.copy(
+                title = draft.title,
+                description = draft.description,
+                url = draft.url,
+                imageUrl = draft.imageUrl,
+                price = draft.price,
+                currency = draft.currency,
+                storeName = draft.storeName,
+                synced = false,
             ),
         )
     }

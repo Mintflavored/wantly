@@ -36,6 +36,13 @@ data class CreateWishlistRequest(
 )
 
 @Serializable
+data class UpdateWishlistRequest(
+    val title: String,
+    val description: String? = null,
+    val coverColor: Int = 0,
+)
+
+@Serializable
 data class WishDto(
     val id: Long,
     val wishlistId: Long,
@@ -64,6 +71,17 @@ data class CreateWishRequest(
 @Serializable
 data class UpdateStatusRequest(
     val status: String,
+)
+
+@Serializable
+data class UpdateWishRequest(
+    val title: String,
+    val description: String? = null,
+    val url: String? = null,
+    val imageUrl: String? = null,
+    val price: Double? = null,
+    val currency: String = "RUB",
+    val storeName: String? = null,
 )
 
 @Serializable

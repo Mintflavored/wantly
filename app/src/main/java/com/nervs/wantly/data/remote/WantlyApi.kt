@@ -46,6 +46,9 @@ class WantlyApi(private val tokenProvider: () -> String?) {
     suspend fun createWishlist(req: CreateWishlistRequest): WishlistDto =
         post("api/wishlists", req)
 
+    suspend fun updateWishlist(id: Long, req: UpdateWishlistRequest): WishlistDto =
+        patch("api/wishlists/$id", req)
+
     suspend fun deleteWishlist(id: Long) {
         request("api/wishlists/$id", method = "DELETE")
     }
@@ -57,6 +60,9 @@ class WantlyApi(private val tokenProvider: () -> String?) {
 
     suspend fun createWish(wishlistId: Long, req: CreateWishRequest): WishDto =
         post("api/wishlists/$wishlistId/wishes", req)
+
+    suspend fun updateWish(wishId: Long, req: UpdateWishRequest): WishDto =
+        patch("api/wishes/$wishId", req)
 
     suspend fun updateWishStatus(wishId: Long, status: String) {
         val req = UpdateStatusRequest(status)
@@ -80,6 +86,15 @@ class WantlyApi(private val tokenProvider: () -> String?) {
     ): Resp = withContext(Dispatchers.IO) {
         val jsonBody = json.encodeToString(serializer(), body).toRequestBody(jsonMedia)
         val resp = doRequest(path, "POST", jsonBody)
+        json.decodeFromString(serializer(), resp)
+    }
+
+    private suspend inline fun <reified Req, reified Resp> patch(
+        path: String,
+        body: Req,
+    ): Resp = withContext(Dispatchers.IO) {
+        val jsonBody = json.encodeToString(serializer(), body).toRequestBody(jsonMedia)
+        val resp = doRequest(path, "PATCH", jsonBody)
         json.decodeFromString(serializer(), resp)
     }
 
