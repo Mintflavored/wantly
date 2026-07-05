@@ -42,9 +42,12 @@ private object Routes {
     const val HOME = "home"
     const val WISHLIST = "wishlist"
     const val ADD_WISH = "addWish"
+    const val EDIT_WISH = "editWish"
     const val AUTH = "auth"
     const val PROFILE = "profile"
     const val ARG_ID = "id"
+    const val ARG_WISHLIST_ID = "wishlistId"
+    const val ARG_WISH_ID = "wishId"
 }
 
 private data class TabItem(val route: String, val labelRes: Int, val icon: ImageVector)
@@ -125,6 +128,7 @@ fun WantlyNavHost() {
                     wishlistId = id,
                     onAddWish = { navController.navigate("${Routes.ADD_WISH}/$id") },
                     onBack = { navController.popBackStack() },
+                    onEditWish = { wishId -> navController.navigate("${Routes.EDIT_WISH}/$id/$wishId") },
                 )
             }
             composable(
@@ -133,6 +137,17 @@ fun WantlyNavHost() {
             ) { entry ->
                 val id = entry.arguments?.getLong(Routes.ARG_ID) ?: return@composable
                 AddWishScreen(wishlistId = id, onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = "${Routes.EDIT_WISH}/{${Routes.ARG_WISHLIST_ID}}/{${Routes.ARG_WISH_ID}}",
+                arguments = listOf(
+                    navArgument(Routes.ARG_WISHLIST_ID) { type = NavType.LongType },
+                    navArgument(Routes.ARG_WISH_ID) { type = NavType.LongType },
+                ),
+            ) { entry ->
+                val wishlistId = entry.arguments?.getLong(Routes.ARG_WISHLIST_ID) ?: return@composable
+                val wishId = entry.arguments?.getLong(Routes.ARG_WISH_ID) ?: return@composable
+                AddWishScreen(wishlistId = wishlistId, onBack = { navController.popBackStack() }, wishId = wishId)
             }
             composable(
                 route = "${Routes.AUTH}/{mode}",

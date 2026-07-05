@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -39,6 +40,7 @@ import com.nervs.wantly.R
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.ui.common.openUrl
 import com.nervs.wantly.ui.components.WishCard
+import com.nervs.wantly.ui.components.WishlistFormDialog
 import com.nervs.wantly.ui.rememberAppViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,6 +49,7 @@ fun WishlistDetailScreen(
     wishlistId: Long,
     onAddWish: () -> Unit,
     onBack: () -> Unit,
+    onEditWish: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val vm: WishlistDetailViewModel =
@@ -55,7 +58,9 @@ fun WishlistDetailScreen(
     val wishes by vm.wishes.collectAsStateWithLifecycle()
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
+    val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
     var wishToDelete by remember { mutableStateOf<WishEntity?>(null) }
+    var showEditList by remember { mutableStateOf(false) }
 
     val currentWishlist = wishlist
     if (currentWishlist == null) {
@@ -98,6 +103,11 @@ fun WishlistDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
                     }
                 },
+                actions = {
+                    IconButton(onClick = { showEditList = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = cdEditWishlist)
+                    }
+                },
             )
         },
         floatingActionButton = {
@@ -125,6 +135,7 @@ fun WishlistDetailScreen(
                         onCycleStatus = { vm.cycleStatus(wish) },
                         onOpen = { openUrl(context, wish.url) },
                         onDelete = { wishToDelete = wish },
+                        onEdit = { onEditWish(wish.id) },
                     )
                 }
             }
@@ -155,6 +166,22 @@ fun WishlistDetailScreen(
                     Text(stringResource(R.string.action_cancel))
                 }
             },
+        )
+    }
+
+    // Редактирование названия/описания/цвета списка (prefill из текущего).
+    if (showEditList) {
+        WishlistFormDialog(
+            titleRes = R.string.dialog_edit_list_title,
+            confirmLabelRes = R.string.action_save,
+            onDismiss = { showEditList = false },
+            onConfirm = { title, description, color ->
+                vm.updateWishlist(currentWishlist, title, description, color)
+                showEditList = false
+            },
+            initialTitle = currentWishlist.title,
+            initialDescription = currentWishlist.description.orEmpty(),
+            initialColor = currentWishlist.coverColor,
         )
     }
 }

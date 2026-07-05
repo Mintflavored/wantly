@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.nervs.wantly.data.GuestCounter
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
+import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.model.WishDraft
 import com.nervs.wantly.data.remote.LinkPreviewError
 import com.nervs.wantly.data.repository.WishlistRepository
@@ -24,6 +25,8 @@ data class AddWishUiState(
     val imageUrl: String = "",
     val isParsing: Boolean = false,
     val error: LinkPreviewError? = null,
+    /** true = редактируем существующий wish (prefill + update); false = создание. */
+    val isEditMode: Boolean = false,
 ) {
     val canSave: Boolean get() = title.isNotBlank()
 }
@@ -34,9 +37,36 @@ class AddWishViewModel(
     private val guestCounter: GuestCounter? = null,
     private val sessionManager: SessionManager? = null,
     private val syncManager: SyncManager? = null,
+    /** id существующего wish для edit-mode; null = создание. */
+    private val wishId: Long? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AddWishUiState())
     val uiState = _uiState.asStateFlow()
+
+    /** Оригинальный wish в edit-mode — нужен для сохранения id/serverId/status/. */
+    private var originalWish: WishEntity? = null
+
+    init {
+        // Prefill в edit-mode. В create-mode остаётся пустая форма.
+        if (wishId != null) {
+            viewModelScope.launch {
+                val wish = repository.getWish(wishId) ?: return@launch
+                originalWish = wish
+                _uiState.update {
+                    it.copy(
+                        url = wish.url.orEmpty(),
+                        title = wish.title,
+                        description = wish.description.orEmpty(),
+                        price = wish.price?.toString().orEmpty(),
+                        currency = wish.currency,
+                        storeName = wish.storeName.orEmpty(),
+                        imageUrl = wish.imageUrl.orEmpty(),
+                        isEditMode = true,
+                    )
+                }
+            }
+        }
+    }
 
     fun onUrlChange(v: String) = update { copy(url = v) }
     fun onTitleChange(v: String) = update { copy(title = v) }
@@ -74,20 +104,24 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
+        val draft = WishDraft(
+            title = st.title.trim(),
+            description = st.description.ifBlank { null },
+            url = st.url.ifBlank { null },
+            imageUrl = st.imageUrl.ifBlank { null },
+            price = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull(),
+            currency = st.currency.ifBlank { "RUB" },
+            storeName = st.storeName.ifBlank { null },
+        )
         viewModelScope.launch {
-            repository.addWish(
-                wishlistId,
-                WishDraft(
-                    title = st.title.trim(),
-                    description = st.description.ifBlank { null },
-                    url = st.url.ifBlank { null },
-                    imageUrl = st.imageUrl.ifBlank { null },
-                    price = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull(),
-                    currency = st.currency.ifBlank { "RUB" },
-                    storeName = st.storeName.ifBlank { null },
-                ),
-            )
-            guestCounter?.incrementWish()
+            val original = originalWish
+            if (st.isEditMode && original != null) {
+                repository.updateWish(original, draft)
+            } else {
+                repository.addWish(wishlistId, draft)
+                // Guest-счётчик инкрементируем только при создании.
+                guestCounter?.incrementWish()
+            }
             // Push в application scope — не отменяется при popBackStack (#45)
             syncManager?.pushPendingScoped()
             onDone()

@@ -52,9 +52,10 @@ import com.nervs.wantly.ui.rememberAppViewModel
 fun AddWishScreen(
     wishlistId: Long,
     onBack: () -> Unit,
+    wishId: Long? = null,
 ) {
     val vm: AddWishViewModel = rememberAppViewModel {
-        AddWishViewModel(wishlistId, it.repository, it.guestCounter, it.sessionManager, it.syncManager)
+        AddWishViewModel(wishlistId, it.repository, it.guestCounter, it.sessionManager, it.syncManager, wishId)
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -66,7 +67,13 @@ fun AddWishScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.add_wish_title)) },
+                title = {
+                    Text(
+                        stringResource(
+                            if (state.isEditMode) R.string.edit_wish_title else R.string.add_wish_title,
+                        ),
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
@@ -199,7 +206,11 @@ fun AddWishScreen(
                 enabled = state.canSave,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(stringResource(R.string.action_add_to_list))
+                Text(
+                    stringResource(
+                        if (state.isEditMode) R.string.action_save else R.string.action_add_to_list,
+                    ),
+                )
             }
         }
     }

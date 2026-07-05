@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,6 +41,7 @@ fun WishCard(
     onCycleStatus: () -> Unit,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val status = WishStatus.fromName(wish.status)
@@ -98,6 +100,9 @@ fun WishCard(
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 StatusChip(status = status, onClick = onCycleStatus)
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit))
+                }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_delete))
                 }
