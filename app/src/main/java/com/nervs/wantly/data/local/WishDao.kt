@@ -66,13 +66,18 @@ interface WishDao {
     )
 
     /**
-     * Сбрасывает textDirty после успешного полного PATCH. Ставит synced=1 только
-     * если ни одно поле/status не изменилось и нет tombstone (snapshot-aware).
+     * Сбрасывает textDirty и ставит synced — оба только при snapshot-match.
+     * Если пока PATCH был в полёте, юзер отредактировал поля (snapshot разошёлся),
+     * textDirty остаётся 1 и synced остаётся 0 → следующий push снова шлёт полный
+     * PATCH. Иначе (безусловный textDirty=0) drain счёл бы row status-only и
+     * отправил узкий /status, потеряв field-правку.
+     *
+     * Чтобы не дублировать длинный предикат, считаем match в подзапросе и шлём
+     * оба поля через один CASE.
      */
     @Query(
         """
         UPDATE wishes SET
-            textDirty = 0,
             synced = CASE
                 WHEN pendingDelete = 0
                      AND title = :expectedTitle
@@ -85,6 +90,19 @@ interface WishDao {
                      AND status = :expectedStatus
                 THEN 1
                 ELSE 0
+            END,
+            textDirty = CASE
+                WHEN pendingDelete = 0
+                     AND title = :expectedTitle
+                     AND (description IS :expectedDescription)
+                     AND (url IS :expectedUrl)
+                     AND (imageUrl IS :expectedImageUrl)
+                     AND (price IS :expectedPrice)
+                     AND currency = :expectedCurrency
+                     AND (storeName IS :expectedStoreName)
+                     AND status = :expectedStatus
+                THEN 0
+                ELSE textDirty
             END
         WHERE id = :id
         """,

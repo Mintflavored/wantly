@@ -151,6 +151,47 @@ class SyncManagerTest {
         assertThat(saved.url).isEqualTo("https://shop/item")
     }
 
+    // ── Regression: textDirty должен сохраняться при неудачной snapshot-check ──
+    // (codex P2 — "Keep textDirty when snapshot check fails")
+    //
+    // Сценарий: PATCH в полёте, юзер редактирует wish второй раз. clearTextDirtyIfUnchanged
+    // вызывается со snapshot'ом ДО второго edit → CASE падает в ELSE. textDirty должен
+    // остаться 1, иначе drain посчитает row status-only и не отправит field-правку.
+    @Test
+    fun `clearTextDirtyIfUnchanged keeps textDirty when snapshot diverged`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Original", serverId = 500, synced = false),
+        )
+        db.wishDao().updateEditableFields(
+            id = wishId, title = "First edit", description = null, url = null,
+            imageUrl = null, price = null, currency = "RUB", storeName = null,
+        )
+        // Пока PATCH был в полёте (со snapshot "First edit"), юзер отредактировал снова.
+        db.wishDao().updateEditableFields(
+            id = wishId, title = "Second edit", description = null, url = null,
+            imageUrl = null, price = null, currency = "RUB", storeName = null,
+        )
+
+        // SyncManager вызвал бы это с устаревшим snapshot "First edit".
+        db.wishDao().clearTextDirtyIfUnchanged(
+            id = wishId,
+            expectedTitle = "First edit", // не совпадает с актуальным "Second edit"
+            expectedDescription = null,
+            expectedUrl = null,
+            expectedImageUrl = null,
+            expectedPrice = null,
+            expectedCurrency = "RUB",
+            expectedStoreName = null,
+            expectedStatus = "WANTED",
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.synced).isFalse() // dirty — row не синхронизирован
+        assertThat(saved.textDirty).isTrue() // textDirty сохранён → след. push шлёт full PATCH
+        assertThat(saved.title).isEqualTo("Second edit") // актуальное поле не перетёрто
+    }
+
     // ── pushPendingVerifiedForLogout: различение исходов logout ──────
     // (баг #20 — expired JWT блокировал logout)
 
