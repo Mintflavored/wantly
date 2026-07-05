@@ -89,8 +89,19 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
         exception<io.ktor.server.plugins.BadRequestException> { call, _ ->
             call.respond(HttpStatusCode.BadRequest, ErrorResponse("Некорректный запрос"))
         }
-        // 400 — явный IllegalArgumentException из route-хендлеров
-        // (например, невалидный email/статус).
+        // 400 — явная ошибка валидации из route-хендлеров
+        // (Validators.kt бросает ValidationException с конкретным сообщением).
+        // Handler стоит ВЫШЕ IllegalArgumentException — Ktor выбирает наиболее
+        // конкретный matching handler, поэтому ValidationException матчится сюда,
+        // а случайные library IllegalArgumentException — в fallback ниже.
+        exception<com.nervs.wantly.backend.validation.ValidationException> { call, cause ->
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(cause.message ?: "Некорректный запрос"),
+            )
+        }
+        // 400 — fallback для library IllegalArgumentException (BCrypt, Exposed и т.п.).
+        // Сообщение НЕ прокидывается — не утекают internal details.
         exception<IllegalArgumentException> { call, _ ->
             call.respond(HttpStatusCode.BadRequest, ErrorResponse("Некорректный запрос"))
         }

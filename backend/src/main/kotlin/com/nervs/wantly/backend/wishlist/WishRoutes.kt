@@ -5,6 +5,7 @@ import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
 import com.nervs.wantly.backend.db.Wishes
 import com.nervs.wantly.backend.db.Wishlists
 import com.nervs.wantly.backend.dto.*
+import com.nervs.wantly.backend.validation.validate
 import io.ktor.http.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
@@ -29,6 +30,7 @@ fun Route.wishRoutes() {
                 if (!owns) return@post call.respond(HttpStatusCode.NotFound, ErrorResponse("Список не найден"))
 
                 val req = call.receive<CreateWishRequest>()
+                req.validate()
                 val id = dbQuery {
                     Wishes.insert {
                         it[wishlistId] = listId
@@ -64,6 +66,7 @@ fun Route.wishRoutes() {
                 val wishId = call.parameters["id"]?.toLongOrNull()
                     ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
                 val req = call.receive<UpdateWishRequest>()
+                req.validate()
                 val owns = dbQuery {
                     (Wishes innerJoin Wishlists)
                         .selectAll().where { (Wishes.id eq wishId) and (Wishlists.ownerId eq uid) }
@@ -111,6 +114,7 @@ fun Route.wishRoutes() {
                 val wishId = call.parameters["id"]?.toLongOrNull()
                     ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
                 val req = call.receive<UpdateWishStatusRequest>()
+                req.validate()
                 val owns = dbQuery {
                     (Wishes innerJoin Wishlists)
                         .selectAll().where { (Wishes.id eq wishId) and (Wishlists.ownerId eq uid) }
