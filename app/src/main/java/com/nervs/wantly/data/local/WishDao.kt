@@ -72,8 +72,11 @@ interface WishDao {
      * PATCH. Иначе (безусловный textDirty=0) drain счёл бы row status-only и
      * отправил узкий /status, потеряв field-правку.
      *
-     * Чтобы не дублировать длинный предикат, считаем match в подзапросе и шлём
-     * оба поля через один CASE.
+     * ВАЖНО: textDirty семантически означает «есть неотправленные FIELD-правки».
+     * Status в этот предикат НЕ входит — иначе cycle-status в окне full PATCH
+     * оставил бы textDirty=1, и drain опять шлёт full PATCH, перезаписывая чужие
+     * field-правки. synced же учитывает status (race по status тоже должен держать
+     * row dirty для follow-up узкого /status).
      */
     @Query(
         """
@@ -100,7 +103,6 @@ interface WishDao {
                      AND (price IS :expectedPrice)
                      AND currency = :expectedCurrency
                      AND (storeName IS :expectedStoreName)
-                     AND status = :expectedStatus
                 THEN 0
                 ELSE textDirty
             END
@@ -155,10 +157,11 @@ interface WishDao {
      * недостаточно: текст/цена/URL меняются чаще без смены status, и edit
      * молча терялся бы (synced затёрт, pull перетёр локал).
      *
-     * textDirty сбрасывается тем же CASE, что и synced: POST уже отправил
-     * field-правки на сервер, значит row синхронизирован по полям → флаг
-     * не нужен. Иначе (snapshot разошёлся — юзер редактировал пока POST летел)
-     * textDirty остаётся как есть, и следующий push шлёт полный PATCH.
+     * textDirty сбрасывается почти тем же CASE, что и synced: POST уже отправил
+     * field-правки на сервер, значит флаг не нужен. Но textDirty семантически —
+     * «есть неотправленные FIELD-правки», поэтому status в его предикат НЕ входит
+     * (cycle-status в окне POST не должен оставлять textDirty=1 — иначе drain
+     * снова шлёт full PATCH и перезаписывает чужие field-правки).
      */
     @Query(
         """
@@ -186,7 +189,6 @@ interface WishDao {
                      AND (price IS :expectedPrice)
                      AND currency = :expectedCurrency
                      AND (storeName IS :expectedStoreName)
-                     AND status = :expectedStatus
                 THEN 0
                 ELSE textDirty
             END

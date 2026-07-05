@@ -231,6 +231,41 @@ class SyncManagerTest {
         assertThat(saved.title).isEqualTo("Second edit") // актуальное поле не перетёрто
     }
 
+    // ── Regression: cycle-status в окне full PATCH не должен держать textDirty ──
+    // (codex P2 — "Clear textDirty for status-only follow-up updates")
+    //
+    // Сценарий: full PATCH в полёте (field-правки уже ушли на сервер), юзер
+    // только cycle-status жмёт → локальный status разошёлся с snapshot'ом.
+    // textDirty должен сброситься (field-правки доставлены), synced остаться 0
+    // (status разошёлся → нужен follow-up узкий /status). Иначе drain снова
+    // шлёт full PATCH и перезаписывает чужие field-правки, сделанные после PATCH.
+    @Test
+    fun `clearTextDirtyIfUnchanged clears textDirty on status-only divergence`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "W", serverId = 500, synced = false, textDirty = true),
+        )
+        // Пока PATCH был в полёте (field-snapshot "W"), юзер cycle-status.
+        db.wishDao().updateStatus(wishId, "PURCHASED")
+
+        db.wishDao().clearTextDirtyIfUnchanged(
+            id = wishId,
+            expectedTitle = "W", // field-snapshot совпадает
+            expectedDescription = null,
+            expectedUrl = null,
+            expectedImageUrl = null,
+            expectedPrice = null,
+            expectedCurrency = "RUB",
+            expectedStoreName = null,
+            expectedStatus = "WANTED", // не совпадает с актуальным "PURCHASED"
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.synced).isFalse() // status разошёлся → row ещё dirty
+        assertThat(saved.textDirty).isFalse() // field-правки доставлены → флаг сброшен
+        assertThat(saved.status).isEqualTo("PURCHASED") // актуальный status на месте
+    }
+
     // ── pushPendingVerifiedForLogout: различение исходов logout ──────
     // (баг #20 — expired JWT блокировал logout)
 
