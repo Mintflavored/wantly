@@ -147,6 +147,18 @@ interface WishlistDao {
     @Query("DELETE FROM wishlists WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    /**
+     * Partial detach: сбрасывает только serverId и помечает dirty. НЕ трогает
+     * pendingDelete и редактируемые поля. Защита от race: SyncManager вызовет
+     * это с устаревшим snapshot (захваченным до PATCH), а full-row update через
+     * copy() затёр бы более новое состояние — например pendingDelete=true от
+     * юзера, удалившего список пока PATCH был в полёте (тогда drain POSTнул бы
+     * список вместо DELETE). Также не трогает clean-поля, чтобы concurrent edit
+     * не откатывался.
+     */
+    @Query("UPDATE wishlists SET serverId = NULL, synced = 0 WHERE id = :id")
+    suspend fun detachServerId(id: Long)
+
     @Query("DELETE FROM wishlists")
     suspend fun clearAll()
 

@@ -327,11 +327,17 @@ class SyncManager(
         wishDao: com.nervs.wantly.data.local.WishDao,
         wishlist: WishlistEntity,
     ) {
-        listDao.update(wishlist.copy(serverId = null, synced = false))
+        // Partial detach: сбрасываем только serverId/synced, не трогая pendingDelete
+        // и редактируемые поля. SyncManager держит устаревший snapshot (захвачен до
+        // PATCH), а full-row update через copy() затёр бы более новое состояние —
+        // например pendingDelete=true от юзера, удалившего список пока PATCH летел:
+        // тогда drain POSTнул бы список вместо DELETE. Аналогично для детей.
+        listDao.detachServerId(wishlist.id)
         for (wish in wishDao.getAll().filter { it.wishlistId == wishlist.id }) {
             when {
+                // Tombstone без serverId отправлять некуда — чистим окончательно.
                 wish.pendingDelete -> wishDao.deleteById(wish.id)
-                else -> wishDao.update(wish.copy(serverId = null, synced = false))
+                else -> wishDao.detachServerId(wish.id)
             }
         }
     }

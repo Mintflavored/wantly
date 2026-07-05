@@ -379,6 +379,31 @@ class SyncManagerTest {
         assertThat(fakeApi.wish(savedWish.serverId!!)!!.wishlistId).isEqualTo(savedList.serverId)
     }
 
+    // ── Regression: detach при 404 не должен затирать concurrent delete ──────
+    // (codex P2 — "Preserve local deletes when detaching a 404 list")
+    //
+    // Сценарий: PATCH в полёте, юзер удаляет список (pendingDelete=true).
+    // PATCH возвращает 404 → detachParentAndChildren. Без partial detach
+    // full-row update затёр бы pendingDelete=false → drain POSTнул бы список
+    // вместо DELETE. С partial detach pendingDelete сохраняется → drain DELETE'т.
+    @Test
+    fun `pushPending wishlist PATCH 404 preserves concurrent delete over detach`() = runTest {
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = false),
+        )
+        // PATCH в полёте (симуляция): пока он летел, юзер удалил список.
+        // markDeleted ставит pendingDelete=1, synced=0.
+        db.wishlistDao().markDeleted(1)
+        // fakeApi НЕ seed'ит list 100 → PATCH 404 → detachParentAndChildren.
+
+        sync.pushPending()
+
+        // Список удалён окончательно (tombstone обработан в drain), не пересоздан.
+        assertThat(db.wishlistDao().getById(1)).isNull()
+        // Сервер НЕ получил новый список (не было POST'а после detach).
+        assertThat(fakeApi.wishlistIds()).isEmpty()
+    }
+
     // ── Regression: edit не должен откатывать свежий serverId ────────────────
     // (codex P2 — "Preserve fresh server IDs when saving wish edits")
     //

@@ -173,6 +173,13 @@ interface WishDao {
     @Query("DELETE FROM wishes WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    /**
+     * Partial detach: сбрасывает только serverId и помечает dirty. НЕ трогает
+     * pendingDelete и редактируемые поля — см. WishlistDao.detachServerId.
+     */
+    @Query("UPDATE wishes SET serverId = NULL, synced = 0 WHERE id = :id")
+    suspend fun detachServerId(id: Long)
+
     @Query("DELETE FROM wishes")
     suspend fun clearAll()
 
