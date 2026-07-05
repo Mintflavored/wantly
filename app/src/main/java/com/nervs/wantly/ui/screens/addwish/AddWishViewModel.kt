@@ -76,7 +76,11 @@ class AddWishViewModel(
     fun onPriceChange(v: String) = update {
         copy(price = v.filter { it.isDigit() || it == '.' || it == ',' || it == ' ' })
     }
-    fun onCurrencyChange(v: String) = update { copy(currency = v.take(3)) }
+    fun onCurrencyChange(v: String) = update {
+        // Trim+uppercase ДО take(3): иначе вставка " usd" обрезается в " us" →
+        // backend нормализует в "US" → 400 (длина 2) → бесконечный retry.
+        copy(currency = v.trim().uppercase().take(3))
+    }
     fun onStoreChange(v: String) = update { copy(storeName = FieldLimits.clamp(v, FieldLimits.WISH_STORE_MAX)) }
     fun onImageUrlChange(v: String) = update { copy(imageUrl = FieldLimits.clamp(v, FieldLimits.URL_MAX)) }
 
@@ -99,7 +103,7 @@ class AddWishViewModel(
                         FieldLimits.clamp(it, FieldLimits.WISH_DESCRIPTION_MAX)
                     } ?: st.description,
                     price = preview.price?.let { numberForField(it) } ?: st.price,
-                    currency = preview.currency?.take(3) ?: st.currency,
+                    currency = preview.currency?.trim()?.uppercase()?.take(3) ?: st.currency,
                     storeName = preview.storeName?.let {
                         FieldLimits.clamp(it, FieldLimits.WISH_STORE_MAX)
                     } ?: st.storeName,
