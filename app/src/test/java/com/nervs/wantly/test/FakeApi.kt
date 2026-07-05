@@ -4,6 +4,8 @@ import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishlistRequest
 import com.nervs.wantly.data.remote.dto.WishDto
 import com.nervs.wantly.data.remote.dto.WishlistDetailResponse
 import com.nervs.wantly.data.remote.dto.WishlistDto
@@ -69,6 +71,15 @@ class FakeApi {
             dto
         }
 
+        coEvery { updateWishlist(any(), any()) } answers {
+            val id = firstArg<Long>()
+            val req = secondArg<UpdateWishlistRequest>()
+            val existing = wishlists[id] ?: throw ApiException(404, "not found")
+            val dto = existing.copy(title = req.title, description = req.description, coverColor = req.coverColor)
+            wishlists[id] = dto
+            dto
+        }
+
         coEvery { deleteWishlist(any()) } answers {
             val id = firstArg<Long>()
             if (wishlists.remove(id) == null) throw ApiException(404, "not found")
@@ -102,6 +113,25 @@ class FakeApi {
             val status = secondArg<String>()
             val existing = wishes[id] ?: throw ApiException(404, "not found")
             wishes[id] = existing.copy(status = status)
+        }
+
+        coEvery { updateWish(any(), any()) } answers {
+            val id = firstArg<Long>()
+            val req = secondArg<UpdateWishRequest>()
+            val existing = wishes[id] ?: throw ApiException(404, "not found")
+            // status optional — если передан, обновляем (как на реальном сервере).
+            val dto = existing.copy(
+                title = req.title,
+                description = req.description,
+                url = req.url,
+                imageUrl = req.imageUrl,
+                price = req.price,
+                currency = req.currency,
+                storeName = req.storeName,
+                status = req.status ?: existing.status,
+            )
+            wishes[id] = dto
+            dto
         }
 
         coEvery { deleteWish(any()) } answers {

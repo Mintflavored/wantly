@@ -9,6 +9,8 @@ import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.remote.ApiException
 import com.nervs.wantly.data.remote.dto.CreateWishRequest
 import com.nervs.wantly.data.remote.dto.CreateWishlistRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishRequest
+import com.nervs.wantly.data.remote.dto.UpdateWishlistRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -364,8 +366,19 @@ class SyncManager(
                 // serverId сохраняется ВСЕГДА; synced — только если нет pendingDelete.
                 // Даже если список удалён во время POST, мы знаем serverId для DELETE.
                 listDao.setServerIdPreservingDirty(list.id, remote.id)
+            } else {
+                // Существующая — PATCH (PUT-стиль: все редактируемые поля).
+                val ok = apiCall {
+                    api.updateWishlist(
+                        list.serverId,
+                        UpdateWishlistRequest(list.title, list.description, list.coverColor),
+                    )
+                }
+                if (ok != null) listDao.markSynced(list.id)
+                // 404 от сервера (список удалён на другом клиенте) не отсоединяем
+                // здесь — пользователь потерял бы локальные данные. Оставляем dirty,
+                // следующий pull принесёт актуальное состояние сервера.
             }
-            // UPDATE для существующих — в Фазе 4 (редактирование списков)
         }
 
         // 3. CREATE/UPDATE wishes
@@ -417,11 +430,32 @@ class SyncManager(
                 // Если удалён — следующий push DELETE по serverId.
                 wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
             } else {
-                // Существующая — PATCH статуса
-                val patchResult = runCatching { api.updateWishStatus(wishServerId, wish.status) }
+                // Существующая — PATCH (PUT-стиль: все редактируемые поля, status
+                // остаётся серверным, т.к. не входит в UpdateWishRequest). Узкий
+                // updateWishStatus больше не нужен в push — все поля едут одним PATCH.
+                val patchResult = runCatching {
+                    api.updateWish(
+                        wishServerId,
+                        UpdateWishRequest(
+                            title = wish.title,
+                            description = wish.description,
+                            url = wish.url,
+                            imageUrl = wish.imageUrl,
+                            price = wish.price,
+                            currency = wish.currency,
+                            storeName = wish.storeName,
+                            // status включён в общий PATCH — иначе UI-кнопка cycle-status
+                            // перестала бы синхронизироваться. Узкий /status endpoint
+                            // остаётся для будущих оптимизаций, но push шлёт всё одним PATCH.
+                            status = wish.status,
+                        ),
+                    )
+                }
                 if (patchResult.isSuccess) {
                     // Условный markSynced: только если статус не изменился и нет tombstone.
                     // Пока PATCH в полёте, пользователь мог изменить статус или удалить wish.
+                    //Race по текстовым полям допускаем (no live users) — следующий push
+                    //отправит новое состояние, т.к. row останется dirty.
                     wishDao.markSyncedIfUnchanged(wish.id, wish.status)
                 } else {
                     val err = patchResult.exceptionOrNull()

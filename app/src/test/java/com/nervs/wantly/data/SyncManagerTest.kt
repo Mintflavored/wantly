@@ -157,8 +157,72 @@ class SyncManagerTest {
 
         sync.pushPending()
 
-        // Сервер получил PATCH
+        // Сервер получил PATCH (status едет в общем PATCH)
         assertThat(fakeApi.wish(500)!!.status).isEqualTo("PURCHASED")
+        // Локальная запись снова synced
+        assertThat(db.wishDao().getById(10)!!.synced).isTrue()
+    }
+
+    @Test
+    fun `pushPending PATCHes existing wishlist with new fields`() = runTest {
+        // synced wishlist → юзер редактирует title → dirty → push шлёт PATCH
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "Old", description = null, coverColor = 0, serverId = 100, synced = true),
+        )
+        fakeApi.seed(WishlistDto(id = 100, title = "Old", coverColor = 0))
+
+        // Юзер редактирует → dirty
+        val existing = db.wishlistDao().getById(1)!!
+        db.wishlistDao().update(
+            existing.copy(title = "New title", description = "desc", coverColor = 3, synced = false),
+        )
+
+        sync.pushPending()
+
+        // Сервер получил обновлённые поля
+        val serverList = fakeApi.wishlist(100)!!
+        assertThat(serverList.title).isEqualTo("New title")
+        assertThat(serverList.description).isEqualTo("desc")
+        assertThat(serverList.coverColor).isEqualTo(3)
+        // Локальная запись снова synced, serverId не изменился
+        val saved = db.wishlistDao().getById(1)!!
+        assertThat(saved.synced).isTrue()
+        assertThat(saved.serverId).isEqualTo(100)
+    }
+
+    @Test
+    fun `pushPending PATCHes existing wish with new fields`() = runTest {
+        // synced wishlist + wish → юзер редактирует url/price → push шлёт PATCH
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(
+                id = 10, wishlistId = 1, title = "W", url = null, price = null,
+                serverId = 500, synced = true,
+            ),
+        )
+        fakeApi.seed(
+            WishlistDto(id = 100, title = "L"),
+            listOf(
+                com.nervs.wantly.data.remote.dto.WishDto(
+                    id = 500, wishlistId = 100, title = "W", status = "WANTED",
+                ),
+            ),
+        )
+
+        // Юзер редактирует → dirty
+        val existing = db.wishDao().getById(10)!!
+        db.wishDao().update(
+            existing.copy(url = "https://shop.example/item", price = 1999.0, synced = false),
+        )
+
+        sync.pushPending()
+
+        // Сервер получил обновлённые поля
+        val serverWish = fakeApi.wish(500)!!
+        assertThat(serverWish.url).isEqualTo("https://shop.example/item")
+        assertThat(serverWish.price).isEqualTo(1999.0)
         // Локальная запись снова synced
         assertThat(db.wishDao().getById(10)!!.synced).isTrue()
     }

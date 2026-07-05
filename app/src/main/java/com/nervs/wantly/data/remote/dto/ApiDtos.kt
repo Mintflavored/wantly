@@ -82,6 +82,7 @@ data class UpdateWishRequest(
     val price: Double? = null,
     val currency: String = "RUB",
     val storeName: String? = null,
+    val status: String? = null,
 )
 
 @Serializable
