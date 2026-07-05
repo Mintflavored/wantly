@@ -106,12 +106,24 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
+        val rawPrice = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull()
+        // Clamp цены: серверный validation reject'ит NaN/negative/over-limit с 400,
+        // а SyncManager не различает validation-400 от transient → бесконечный retry.
+        // Null (поле пустое) оставляем как есть — цена optional.
+        val clampedPrice = rawPrice?.let {
+            when {
+                it.isNaN() || it.isInfinite() -> 0.0
+                it < 0 -> 0.0
+                it > FieldLimits.PRICE_MAX -> FieldLimits.PRICE_MAX
+                else -> it
+            }
+        }
         val draft = WishDraft(
             title = st.title.trim(),
             description = st.description.ifBlank { null },
             url = st.url.ifBlank { null },
             imageUrl = st.imageUrl.ifBlank { null },
-            price = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull(),
+            price = clampedPrice,
             currency = st.currency.ifBlank { "RUB" },
             storeName = st.storeName.ifBlank { null },
         )

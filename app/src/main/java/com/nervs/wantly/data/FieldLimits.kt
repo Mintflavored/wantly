@@ -22,6 +22,10 @@ object FieldLimits {
     const val WISH_STORE_MAX = 200
     const val URL_MAX = 2_048
 
+    /** Верхний лимит цены — зеркало серверного MAX_PRICE. NaN/negative/over-limit
+     *  reject'ятся сервером с 400 → без client-side clamp wish завис бы в retry. */
+    const val PRICE_MAX = 1_000_000_000.0
+
     /** Обрезает value до [max] символов. Используется в onValueChange колбэках. */
     fun clamp(value: String, max: Int): String = if (value.length > max) value.take(max) else value
 }
