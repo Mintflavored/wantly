@@ -31,7 +31,7 @@ data class AddWishUiState(
 ) {
     /**
      * Кнопка Save активна только когда все обязательные поля валидны по серверным
-     * правилам. Без этих проверок UI позволил бы сохранить ftp://-URL или 2-буквенную
+     * правилам. Без этих проверок UI позволил бы сохранить ftp://-URL или `руб`-
      * валюту → бэкенд 400 → SyncManager бесконечно ретраит → блокирует logout.
      * Правила — зеркало backend validation/Validators.kt.
      */
@@ -39,14 +39,28 @@ data class AddWishUiState(
         get() = title.isNotBlank() &&
             isValidUrl(url) &&
             isValidUrl(imageUrl) &&
-            currency.length == 3
+            currency.matches(CURRENCY_REGEX)
 
-    /** Пустой URL ок (поле optional). Непустой — только http(s):// (case-insensitive),
-     *  остальные схемы (ftp/javascript/file) backend reject'ит. */
+    /**
+     * Пустой URL ок (поле optional). Непустой нормализуется как backend
+     * (normalizeWishUrl): schemeless → https:// prefix, не-HTTP схемы (ftp/javascript)
+     * reject'ятся. Так UI принимает `example.com` (как раньше), но не `ftp://`.
+     */
     private fun isValidUrl(value: String): Boolean {
-        if (value.isBlank()) return true
-        val lower = value.lowercase()
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return true
+        val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").find(trimmed)
+        val normalized = when {
+            schemeMatch == null -> "https://$trimmed"
+            schemeMatch.value.lowercase() in setOf("http://", "https://") -> trimmed
+            else -> return false // не-HTTP схема
+        }
+        val lower = normalized.lowercase()
         return lower.startsWith("http://") || lower.startsWith("https://")
+    }
+
+    private companion object {
+        val CURRENCY_REGEX = Regex("^[A-Z]{3}$")
     }
 }
 
