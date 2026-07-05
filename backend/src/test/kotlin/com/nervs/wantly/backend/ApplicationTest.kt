@@ -91,6 +91,50 @@ class ApplicationTest {
     )
 
     @kotlinx.serialization.Serializable
+    data class UpdateWishlistRequest(
+        val title: String,
+        val description: String? = null,
+        val coverColor: Int = 0,
+    )
+
+    @kotlinx.serialization.Serializable
+    data class CreateWishRequest(
+        val title: String,
+        val description: String? = null,
+        val url: String? = null,
+        val imageUrl: String? = null,
+        val price: Double? = null,
+        val currency: String = "RUB",
+        val storeName: String? = null,
+        val status: String = "WANTED",
+    )
+
+    @kotlinx.serialization.Serializable
+    data class UpdateWishRequest(
+        val title: String,
+        val description: String? = null,
+        val url: String? = null,
+        val imageUrl: String? = null,
+        val price: Double? = null,
+        val currency: String = "RUB",
+        val storeName: String? = null,
+    )
+
+    @kotlinx.serialization.Serializable
+    data class WishDto(
+        val id: Long,
+        val wishlistId: Long,
+        val title: String,
+        val description: String? = null,
+        val url: String? = null,
+        val imageUrl: String? = null,
+        val price: Double? = null,
+        val currency: String = "RUB",
+        val storeName: String? = null,
+        val status: String = "WANTED",
+    )
+
+    @kotlinx.serialization.Serializable
     data class WishlistDetailResponse(
         val wishlist: WishlistDto,
         val wishes: List<Map<String, String?>> = emptyList(),
@@ -269,6 +313,103 @@ class ApplicationTest {
 
         val resp = client.get("/api/wishlists/${created.id}") {
             header(HttpHeaders.Authorization, "Bearer ${bob.token}")
+        }
+        assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
+
+    @Test
+    fun `update wishlist returns 200 with new fields`() = testApp { client ->
+        val auth = client.register("edit-wl@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Old title", "Old desc", 0))
+        }.body()
+
+        val resp = client.patch("/api/wishlists/${created.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishlistRequest("New title", "New desc", 3))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val dto: WishlistDto = resp.body()
+        assertEquals("New title", dto.title)
+        assertEquals("New desc", dto.description)
+        assertEquals(3, dto.coverColor)
+        assertEquals(created.id, dto.id)
+    }
+
+    @Test
+    fun `update wishlist owned by another user returns 404`() = testApp { client ->
+        val alice = client.register("edit-owner@example.com")
+        val bob = client.register("edit-intruder@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${alice.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Alice's list"))
+        }.body()
+
+        val resp = client.patch("/api/wishlists/${created.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${bob.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishlistRequest("Hijacked"))
+        }
+        assertEquals(HttpStatusCode.NotFound, resp.status)
+
+        // Содержимое не изменилось.
+        val detail: WishlistDetailResponse = client.get("/api/wishlists/${created.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${alice.token}")
+        }.body()
+        assertEquals("Alice's list", detail.wishlist.title)
+    }
+
+    @Test
+    fun `update wish returns 200 with new fields`() = testApp { client ->
+        val auth = client.register("edit-wish@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val created: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Old wish", price = 100.0, status = "RESERVED"))
+        }.body()
+
+        val resp = client.patch("/api/wishes/${created.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishRequest(title = "Edited wish", price = 250.0, storeName = "Shop"))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val dto: WishDto = resp.body()
+        assertEquals("Edited wish", dto.title)
+        assertEquals(250.0, dto.price)
+        assertEquals("Shop", dto.storeName)
+        // status не входит в UpdateWishRequest → должен сохраниться.
+        assertEquals("RESERVED", dto.status)
+    }
+
+    @Test
+    fun `update wish owned by another user returns 404`() = testApp { client ->
+        val alice = client.register("wish-owner@example.com")
+        val bob = client.register("wish-intruder@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${alice.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val wish: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${alice.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Alice's wish"))
+        }.body()
+
+        val resp = client.patch("/api/wishes/${wish.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${bob.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishRequest(title = "Hijacked"))
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }

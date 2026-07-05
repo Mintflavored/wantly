@@ -86,6 +86,40 @@ fun Route.wishlistRoutes() {
                 )
             }
 
+            patch("/{id}") {
+                val uid = call.userId()!!
+                val listId = call.parameters["id"]?.toLongOrNull()
+                    ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
+                val req = call.receive<UpdateWishlistRequest>()
+                // PUT-стиль: перезаписываем все редактируемые поля. isShared
+                // остаётся серверным (как в CreateWishlistRequest). ownership через
+                // WHERE (id, ownerId) → 404 если чужой (don't leak existence).
+                val updated = dbQuery {
+                    Wishlists.update({ (Wishlists.id eq listId) and (Wishlists.ownerId eq uid) }) {
+                        it[title] = req.title.trim()
+                        it[description] = req.description?.trim()
+                        it[coverColor] = req.coverColor
+                    }
+                }
+                if (updated == 0) {
+                    return@patch call.respond(HttpStatusCode.NotFound, ErrorResponse("Список не найден"))
+                }
+                // Перечитываем строку, чтобы вернуть актуальный isShared и поля.
+                val row = dbQuery {
+                    Wishlists.selectAll().where { Wishlists.id eq listId }.single()
+                }
+                call.respond(
+                    HttpStatusCode.OK,
+                    WishlistDto(
+                        id = row[Wishlists.id],
+                        title = row[Wishlists.title],
+                        description = row[Wishlists.description],
+                        isShared = row[Wishlists.isShared],
+                        coverColor = row[Wishlists.coverColor],
+                    ),
+                )
+            }
+
             delete("/{id}") {
                 val uid = call.userId()!!
                 val listId = call.parameters["id"]?.toLongOrNull()
