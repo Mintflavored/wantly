@@ -89,6 +89,68 @@ class SyncManagerTest {
         assertThat(fakeApi.wishIds()).hasSize(1)
     }
 
+    // ── Regression: edit во время POST не должен теряться (create path) ─────
+    // (codex P2 — "Preserve list/wish edits made during first sync")
+    //
+    // Тестируем snapshot-aware setServerIdPreservingDirty напрямую: это DAO-метод,
+    // который SyncManager вызывает после POST. Если поля изменились пока POST был
+    // в полёте, synced должен остаться false → следующий push PATCHит edit.
+    @Test
+    fun `setServerIdPreservingDirty keeps wishlist dirty if fields changed during POST`() = runTest {
+        val localId = db.wishlistDao().insert(
+            WishlistEntity(title = "Original", description = null, coverColor = 0, synced = false),
+        )
+        // Симулируем: snapshot захвачен до POST (Original/null/0), но пока POST летел,
+        // юзер отредактировал поля в Room.
+        db.wishlistDao().updateEditableFields(localId, "Edited", "new desc", 3)
+
+        db.wishlistDao().setServerIdPreservingDirty(
+            localId = localId,
+            serverId = 100,
+            expectedTitle = "Original",
+            expectedCoverColor = 0,
+            expectedDescription = null,
+        )
+
+        val saved = db.wishlistDao().getById(localId)!!
+        assertThat(saved.serverId).isEqualTo(100L) // serverId сохранён всегда
+        assertThat(saved.synced).isFalse() // но dirty — edit не потерян
+        assertThat(saved.title).isEqualTo("Edited") // поля не перетёрты snapshot'ом
+    }
+
+    @Test
+    fun `setServerIdPreservingDirty keeps wish dirty if fields changed during POST`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Original", url = null, price = null, synced = false),
+        )
+        // Edit в полёте: title/url изменились, status тот же.
+        db.wishDao().updateEditableFields(
+            id = wishId, title = "Edited", description = null,
+            url = "https://shop/item", imageUrl = null, price = 99.0,
+            currency = "RUB", storeName = null,
+        )
+
+        db.wishDao().setServerIdPreservingDirty(
+            localId = wishId,
+            serverId = 500,
+            expectedTitle = "Original",
+            expectedDescription = null,
+            expectedUrl = null,
+            expectedImageUrl = null,
+            expectedPrice = null,
+            expectedCurrency = "RUB",
+            expectedStoreName = null,
+            expectedStatus = "WANTED",
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.serverId).isEqualTo(500L) // serverId сохранён всегда
+        assertThat(saved.synced).isFalse() // dirty — edit не потерян, след. push PATCHит
+        assertThat(saved.title).isEqualTo("Edited")
+        assertThat(saved.url).isEqualTo("https://shop/item")
+    }
+
     // ── pushPendingVerifiedForLogout: различение исходов logout ──────
     // (баг #20 — expired JWT блокировал logout)
 

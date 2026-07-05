@@ -89,14 +89,48 @@ interface WishDao {
     suspend fun setServerId(localId: Long, serverId: Long)
 
     /**
-     * Привязывает serverId (всегда), но помечает synced — только если статус
-     * не изменился и нет pendingDelete. Защита от race: пока POST в полёте,
-     * пользователь мог изменить статус или удалить wish.
-     * В отличие от setServerIdIfUnchanged — serverId сохраняется ВСЕГДА,
-     * чтобы следующий push мог PATCH/DELETE, а не POSTить дубль.
+     * Привязывает serverId (всегда), но помечает synced — только если ни одно
+     * PATCH-поле не изменилось и нет pendingDelete. Защита от race: пока POST
+     * в полёте, пользователь мог отредактировать любые поля или удалить wish.
+     * serverId сохраняется ВСЕГДА, чтобы следующий push мог PATCH/DELETE,
+     * а не POSTить дубль.
+     *
+     * Проверяем все поля, что едут в UpdateWishRequest — status-only проверки
+     * недостаточно: текст/цена/URL меняются чаще без смены status, и edit
+     * молча терялся бы (synced затёрт, pull перетёр локал).
      */
-    @Query("UPDATE wishes SET serverId = :serverId, synced = CASE WHEN status = :expectedStatus AND pendingDelete = 0 THEN 1 ELSE 0 END WHERE id = :localId")
-    suspend fun setServerIdPreservingDirty(localId: Long, serverId: Long, expectedStatus: String)
+    @Query(
+        """
+        UPDATE wishes SET
+            serverId = :serverId,
+            synced = CASE
+                WHEN pendingDelete = 0
+                     AND title = :expectedTitle
+                     AND (description IS :expectedDescription)
+                     AND (url IS :expectedUrl)
+                     AND (imageUrl IS :expectedImageUrl)
+                     AND (price IS :expectedPrice)
+                     AND currency = :expectedCurrency
+                     AND (storeName IS :expectedStoreName)
+                     AND status = :expectedStatus
+                THEN 1
+                ELSE 0
+            END
+        WHERE id = :localId
+        """,
+    )
+    suspend fun setServerIdPreservingDirty(
+        localId: Long,
+        serverId: Long,
+        expectedTitle: String,
+        expectedDescription: String?,
+        expectedUrl: String?,
+        expectedImageUrl: String?,
+        expectedPrice: Double?,
+        expectedCurrency: String,
+        expectedStoreName: String?,
+        expectedStatus: String,
+    )
 
     @Query("UPDATE wishes SET synced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)

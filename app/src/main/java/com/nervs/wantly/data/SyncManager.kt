@@ -363,9 +363,18 @@ class SyncManager(
                 val remote = apiCall {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
                 } ?: continue
-                // serverId сохраняется ВСЕГДА; synced — только если нет pendingDelete.
-                // Даже если список удалён во время POST, мы знаем serverId для DELETE.
-                listDao.setServerIdPreservingDirty(list.id, remote.id)
+                // serverId сохраняется ВСЕГДА; synced — только если PATCH-поля не
+                // изменились и нет pendingDelete. Даже если список удалён или
+                // отредактирован во время POST, мы знаем serverId для PATCH/DELETE.
+                // Snapshot из list (захвачен до POST) — если юзер редактировал поля
+                // пока POST в полёте, row останется dirty для follow-up PATCH.
+                listDao.setServerIdPreservingDirty(
+                    localId = list.id,
+                    serverId = remote.id,
+                    expectedTitle = list.title,
+                    expectedCoverColor = list.coverColor,
+                    expectedDescription = list.description,
+                )
             } else {
                 // Существующая — PATCH (PUT-стиль: все редактируемые поля).
                 // Захватываем снапшот до PATCH для условного markSynced — иначе
@@ -454,10 +463,22 @@ class SyncManager(
                 } catch (e: Exception) {
                     continue
                 }
-                // serverId сохраняется ВСЕГДА; synced — только если статус не изменился
-                // и нет pendingDelete. Если статус изменился — следующий push PATCHит.
-                // Если удалён — следующий push DELETE по serverId.
-                wishDao.setServerIdPreservingDirty(wish.id, remote.id, wish.status)
+                // serverId сохраняется ВСЕГДА; synced — только если ни одно PATCH-поле
+                // не изменилось и нет pendingDelete. Snapshot из wish (захвачен до POST):
+                // если юзер редактировал поля пока POST в полёте, row останется dirty
+                // для follow-up PATCH. Если удалён — следующий push DELETE по serverId.
+                wishDao.setServerIdPreservingDirty(
+                    localId = wish.id,
+                    serverId = remote.id,
+                    expectedTitle = wish.title,
+                    expectedDescription = wish.description,
+                    expectedUrl = wish.url,
+                    expectedImageUrl = wish.imageUrl,
+                    expectedPrice = wish.price,
+                    expectedCurrency = wish.currency,
+                    expectedStoreName = wish.storeName,
+                    expectedStatus = wish.status,
+                )
             } else {
                 // Существующая — PATCH (PUT-стиль: все редактируемые поля + status
                 // одним запросом). Узкий updateWishStatus больше не нужен в push.
