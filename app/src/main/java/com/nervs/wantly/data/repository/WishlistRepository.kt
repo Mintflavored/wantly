@@ -51,8 +51,10 @@ class WishlistRepository(
     }
 
     /**
-     * Обновляет поля wishlist локально с synced=false → SyncManager отправит PATCH.
-     * Сохраняет id/serverId/createdAt/ownerEmail/sync-флаги через copy().
+     * Обновляет редактируемые поля wishlist локально с synced=false → SyncManager
+     * отправит PATCH. Partial update — НЕ трогает serverId/createdAt/ownerEmail,
+     * чтобы не затереть метаданные, которые background-sync мог обновить пока
+     * UI держал устаревший snapshot (например свежий serverId для нового списка).
      */
     suspend fun updateWishlist(
         wishlist: WishlistEntity,
@@ -60,14 +62,7 @@ class WishlistRepository(
         description: String?,
         coverColor: Int,
     ) {
-        wishlistDao.update(
-            wishlist.copy(
-                title = title,
-                description = description,
-                coverColor = coverColor,
-                synced = false,
-            ),
-        )
+        wishlistDao.updateEditableFields(wishlist.id, title, description, coverColor)
     }
 
     suspend fun deleteWishlist(wishlist: WishlistEntity) {
@@ -98,21 +93,22 @@ class WishlistRepository(
 
     /**
      * Обновляет редактируемые поля wish локально с synced=false → SyncManager
-     * отправит PATCH. Сохраняет wishlistId (без перемещения), status, sortOrder,
-     * id/serverId/createdAt/ownerEmail через copy().
+     * отправит PATCH. Partial update — НЕ трогает serverId/wishlistId/status/
+     * sortOrder/createdAt/ownerEmail, чтобы не затереть метаданные, которые
+     * background-sync мог обновить пока UI держал устаревший snapshot
+     * (например свежий serverId для нового wish — иначе он откатился бы в null
+     * и след. push создал дубль на сервере).
      */
     suspend fun updateWish(wish: WishEntity, draft: WishDraft) {
-        wishDao.update(
-            wish.copy(
-                title = draft.title,
-                description = draft.description,
-                url = draft.url,
-                imageUrl = draft.imageUrl,
-                price = draft.price,
-                currency = draft.currency,
-                storeName = draft.storeName,
-                synced = false,
-            ),
+        wishDao.updateEditableFields(
+            id = wish.id,
+            title = draft.title,
+            description = draft.description,
+            url = draft.url,
+            imageUrl = draft.imageUrl,
+            price = draft.price,
+            currency = draft.currency,
+            storeName = draft.storeName,
         )
     }
 

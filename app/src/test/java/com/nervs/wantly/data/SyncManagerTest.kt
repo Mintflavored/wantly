@@ -287,6 +287,77 @@ class SyncManagerTest {
         assertThat(fakeApi.wishlist(saved.serverId!!)!!.title).isEqualTo("L")
     }
 
+    // ── Regression: wishlist PATCH 404 должен отсоединять и clean детей ────
+    // (codex P1 — "Detach child wishes when recreating deleted lists")
+    @Test
+    fun `pushPending wishlist PATCH 404 detaches clean children for recreation`() = runTest {
+        // parent dirty (edit), child clean (synced=true со старым serverId=600).
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = false),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 10, wishlistId = 1, title = "W", serverId = 600, synced = true),
+        )
+        // fakeApi НЕ seed'ит ничего → parent PATCH 404.
+
+        sync.pushPending()
+
+        // drain-loop: parent пересоздан через POST, child тоже POST'нут под новым
+        // parent serverId (не потерян, не остался orphan со старым serverId=600).
+        val savedList = db.wishlistDao().getById(1)!!
+        assertThat(savedList.serverId).isNotEqualTo(100L)
+
+        val savedWish = db.wishDao().getById(10)!!
+        assertThat(savedWish.serverId).isNotNull()
+        assertThat(savedWish.serverId).isNotEqualTo(600L)
+        assertThat(savedWish.synced).isTrue()
+        // Сервер получил ровно один список и один wish, привязанный к нему.
+        assertThat(fakeApi.wishlistIds()).containsExactly(savedList.serverId)
+        assertThat(fakeApi.wishIds()).containsExactly(savedWish.serverId)
+        assertThat(fakeApi.wish(savedWish.serverId!!)!!.wishlistId).isEqualTo(savedList.serverId)
+    }
+
+    // ── Regression: edit не должен откатывать свежий serverId ────────────────
+    // (codex P2 — "Preserve fresh server IDs when saving wish edits")
+    //
+    // Сценарий: UI открыл edit-screen для нового wish (serverId ещё null),
+    // background-sync успел проставить serverId=600, потом UI вызывает save.
+    // updateEditableFields должен сохранить свежий serverId (не откатить в null),
+    // иначе след. push POST'нет редактирование как дубль.
+    @Test
+    fun `wish edit preserves serverId assigned by background sync`() = runTest {
+        // UI-снапшот: serverId ещё null (wish только что создан локально).
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 10, wishlistId = 1, title = "Old", serverId = null, synced = false),
+        )
+        // Background-sync проставил serverId параллельно.
+        db.wishDao().setServerId(10, 600)
+        // Проверка precondition: в Room serverId=600, а UI-снапшот мог быть устаревшим.
+        assertThat(db.wishDao().getById(10)!!.serverId).isEqualTo(600L)
+
+        // Repository.updateWish — partial update через updateEditableFields,
+        // не full-row copy. Передаём устаревший snapshot из ViewModel (serverId=null
+        // в Kotlin-объекте не используется — метод работает по id).
+        val staleSnapshot = db.wishDao().getById(10)!!.copy(serverId = null, title = "Old")
+        val repo = com.nervs.wantly.data.repository.WishlistRepository(
+            wishlistDao = db.wishlistDao(),
+            wishDao = db.wishDao(),
+            linkPreviewService = mockk(relaxed = true),
+            api = api,
+            sessionManager = mockk(relaxed = true),
+        )
+        repo.updateWish(staleSnapshot, com.nervs.wantly.data.model.WishDraft(title = "Edited"))
+
+        // serverId не откатился в null; поля обновились; synced=false (dirty для push).
+        val saved = db.wishDao().getById(10)!!
+        assertThat(saved.serverId).isEqualTo(600L)
+        assertThat(saved.title).isEqualTo("Edited")
+        assertThat(saved.synced).isFalse()
+    }
+
     @Test
     fun `pushPending sends tombstone DELETE to server when row exists remotely`() = runTest {
         db.wishlistDao().insertWithId(

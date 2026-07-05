@@ -394,11 +394,14 @@ class SyncManager(
                             // Список удалён на сервере (другой клиент). Без отсоединения
                             // serverId следующий push снова получит 404 и зависнет;
                             // pullInternal пропускает dirty lists → вечный ретрай, а
-                            // pushPendingVerifiedForLogout заблокирует logout. Сбрасываем
-                            // serverId → следующий push POSTнет локальное состояние заново.
-                            listDao.update(list.copy(serverId = null, synced = false))
-                            // Планируем drain pass — иначе freshly-detached list останется
-                            // unsynced и pushPendingVerifiedForLogout заблокирует logout.
+                            // pushPendingVerifiedForLogout заблокирует logout.
+                            // Отсоединяем parent И детей: clean дети иначе сохранили бы
+                            // устаревший serverId и потерялись при следующем pull (orphan).
+                            // Логика идентична wish-ветке createWish 404 и pull-recreate.
+                            detachParentAndChildren(listDao, wishDao, list)
+                            // Планируем drain pass — иначе freshly-detached list/дети
+                            // останутся unsynced и pushPendingVerifiedForLogout заблокирует
+                            // logout. Outer pushPending/pushAndDrain loop POSTнет в след.витке.
                             pushPendingScheduled.set(true)
                         }
                     }

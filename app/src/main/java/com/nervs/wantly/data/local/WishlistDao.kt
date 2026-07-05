@@ -43,6 +43,28 @@ interface WishlistDao {
     @Query("UPDATE wishlists SET pendingDelete = 1, synced = 0 WHERE id = :id")
     suspend fun markDeleted(id: Long)
 
+    /**
+     * Partial update: только редактируемые поля + synced=0. Не трогает serverId,
+     * createdAt, ownerEmail, isShared — защита от race, когда сущность устарела
+     * относительно Room (например background-sync уже проставил serverId).
+     */
+    @Query(
+        """
+        UPDATE wishlists SET
+            title = :title,
+            description = :description,
+            coverColor = :coverColor,
+            synced = 0
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateEditableFields(
+        id: Long,
+        title: String,
+        description: String?,
+        coverColor: Int,
+    )
+
     // ── Sync helpers ──────────────────────────────────────
 
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 0")

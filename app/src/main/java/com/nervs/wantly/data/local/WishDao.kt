@@ -32,6 +32,37 @@ interface WishDao {
     @Query("UPDATE wishes SET status = :status, synced = 0 WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
 
+    /**
+     * Partial update: только редактируемые поля + synced=0. Не трогает serverId,
+     * createdAt, ownerEmail, wishlistId — защита от race, когда сущность, которую
+     * видит UI/Repository, устарела относительно Room (например background-sync
+     * уже проставил serverId). Полный @Update через copy() затёр бы эти метаданные.
+     */
+    @Query(
+        """
+        UPDATE wishes SET
+            title = :title,
+            description = :description,
+            url = :url,
+            imageUrl = :imageUrl,
+            price = :price,
+            currency = :currency,
+            storeName = :storeName,
+            synced = 0
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateEditableFields(
+        id: Long,
+        title: String,
+        description: String?,
+        url: String?,
+        imageUrl: String?,
+        price: Double?,
+        currency: String,
+        storeName: String?,
+    )
+
     @Query("UPDATE wishes SET pendingDelete = 1, synced = 0 WHERE id = :id")
     suspend fun markDeleted(id: Long)
 
