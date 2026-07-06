@@ -26,4 +26,11 @@ data class WishlistEntity(
      * email → Room вытирается, иначе данные чужого аккаунта уйдут под новым токеном.
      */
     @ColumnInfo(name = "ownerEmail") val ownerEmail: String? = null,
+    /**
+     * true = сервер reject'нул row с HTTP 400 (validation или иной bad-request).
+     * SyncManager тогда ставит synced=1 + syncError=1 → row перестаёт retry'иться
+     * и не блокирует logout. Пользователь видит иконку ошибки, редактирует →
+     * Repository.updateEditableFields сбрасывает syncError=0 и снова synced=0.
+     */
+    @ColumnInfo(name = "syncError", defaultValue = "0") val syncError: Boolean = false,
 )

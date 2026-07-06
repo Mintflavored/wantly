@@ -4,6 +4,7 @@ import at.favre.lib.crypto.bcrypt.BCrypt
 import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
 import com.nervs.wantly.backend.db.Users
 import com.nervs.wantly.backend.dto.*
+import com.nervs.wantly.backend.validation.validate
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -16,8 +17,9 @@ import org.jetbrains.exposed.sql.selectAll
 
 fun Route.authRoutes() {
     route("/api/auth") {
-        post("/register") {
+            post("/register") {
             val req = call.receive<RegisterRequest>()
+            req.validate()
             val existing = dbQuery {
                 Users.selectAll().where { Users.email eq req.email.trim().lowercase() }.count() > 0
             }
@@ -42,6 +44,7 @@ fun Route.authRoutes() {
 
         post("/login") {
             val req = call.receive<LoginRequest>()
+            req.validate()
             val row = dbQuery {
                 Users.selectAll().where { Users.email eq req.email.trim().lowercase() }.singleOrNull()
             }

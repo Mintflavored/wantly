@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nervs.wantly.R
+import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.ui.common.openUrl
 import com.nervs.wantly.ui.components.WishCard
@@ -59,6 +60,10 @@ fun WishlistDetailScreen(
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
     val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    val syncErrorMessage = stringResource(R.string.sync_error_message)
+    val syncErrorEdit = stringResource(R.string.sync_error_action_edit)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var wishToDelete by remember { mutableStateOf<WishEntity?>(null) }
     var showEditList by remember { mutableStateOf(false) }
 
@@ -95,6 +100,7 @@ fun WishlistDetailScreen(
     }
 
     Scaffold(
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(currentWishlist.title) },
@@ -136,6 +142,18 @@ fun WishlistDetailScreen(
                         onOpen = { openUrl(context, wish.url) },
                         onDelete = { wishToDelete = wish },
                         onEdit = { onEditWish(wish.id) },
+                        onSyncError = {
+                            scope.launch {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = syncErrorMessage,
+                                    actionLabel = syncErrorEdit,
+                                    duration = androidx.compose.material3.SnackbarDuration.Long,
+                                )
+                                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                    onEditWish(wish.id)
+                                }
+                            }
+                        },
                     )
                 }
             }

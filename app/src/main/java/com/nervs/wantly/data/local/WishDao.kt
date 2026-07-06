@@ -29,15 +29,17 @@ interface WishDao {
     @Update
     suspend fun update(wish: WishEntity)
 
-    @Query("UPDATE wishes SET status = :status, synced = 0 WHERE id = :id")
+    @Query("UPDATE wishes SET status = :status, synced = 0, syncError = 0 WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
 
     /**
      * Partial update: только редактируемые поля + synced=0 + textDirty=1
-     * (маркер, что push должен слать полный PATCH, а не узкий PATCH /status —
-     * иначе cycle-status перезаписал бы эти правки). Не трогает serverId,
-     * createdAt, ownerEmail, wishlistId, status — защита от race, когда сущность,
-     * которую видит UI/Repository, устарела относительно Room.
+     * + syncError=0 (любое редактирование сбрасывает terminal-error и снова
+     * делает row dirty для повторного sync). (Маркер textDirty — что push
+     * должен слать полный PATCH, а не узкий PATCH /status — иначе cycle-status
+     * перезаписал бы эти правки). Не трогает serverId, createdAt, ownerEmail,
+     * wishlistId, status — защита от race, когда сущность, которую видит
+     * UI/Repository, устарела относительно Room.
      */
     @Query(
         """
@@ -50,7 +52,8 @@ interface WishDao {
             currency = :currency,
             storeName = :storeName,
             synced = 0,
-            textDirty = 1
+            textDirty = 1,
+            syncError = 0
         WHERE id = :id
         """,
     )
@@ -121,7 +124,7 @@ interface WishDao {
         expectedStatus: String,
     )
 
-    @Query("UPDATE wishes SET pendingDelete = 1, synced = 0 WHERE id = :id")
+    @Query("UPDATE wishes SET pendingDelete = 1, synced = 0, syncError = 0 WHERE id = :id")
     suspend fun markDeleted(id: Long)
 
     @Delete
@@ -255,6 +258,41 @@ interface WishDao {
      */
     @Query("UPDATE wishes SET serverId = NULL, synced = 0 WHERE id = :id")
     suspend fun detachServerId(id: Long)
+
+    /**
+     * Помечает row как synced + syncError — HTTP 400 от сервера (validation или
+     * иной bad-request). См. [WishlistDao.markSyncError] — семантика идентична.
+     *
+     * Snapshot-guard: пока PATCH/POST в полёте, юзер мог исправить поле →
+     * updateEditableFields уже выставил synced=0, syncError=0. Безусловный
+     * markSyncError затёр бы этот фикс. Применяем только если поля совпадают.
+     */
+    @Query(
+        """
+        UPDATE wishes SET synced = 1, syncError = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND (url IS :expectedUrl)
+          AND (imageUrl IS :expectedImageUrl)
+          AND (price IS :expectedPrice)
+          AND currency = :expectedCurrency
+          AND (storeName IS :expectedStoreName)
+          AND status = :expectedStatus
+        """,
+    )
+    suspend fun markSyncError(
+        id: Long,
+        expectedTitle: String,
+        expectedDescription: String?,
+        expectedUrl: String?,
+        expectedImageUrl: String?,
+        expectedPrice: Double?,
+        expectedCurrency: String,
+        expectedStoreName: String?,
+        expectedStatus: String,
+    )
 
     @Query("DELETE FROM wishes")
     suspend fun clearAll()

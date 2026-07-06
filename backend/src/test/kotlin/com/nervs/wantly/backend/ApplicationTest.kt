@@ -141,6 +141,9 @@ class ApplicationTest {
         val wishes: List<Map<String, String?>> = emptyList(),
     )
 
+    @kotlinx.serialization.Serializable
+    data class ErrorResponse(val error: String)
+
     private suspend fun io.ktor.client.HttpClient.register(
         email: String,
         password: String = "test123",
@@ -443,5 +446,303 @@ class ApplicationTest {
     fun `unauthenticated request returns 401`() = testApp { client ->
         val resp = client.get("/api/wishlists")
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    // ── Валидация запросов ──────────────────────────────────────────────
+
+    private suspend fun assertBadRequest(
+        client: io.ktor.client.HttpClient,
+        resp: io.ktor.client.statement.HttpResponse,
+        expectedMessage: String,
+    ) {
+        assertEquals(HttpStatusCode.BadRequest, resp.status, "Expected 400, got ${resp.status}")
+        val body: ErrorResponse = resp.body()
+        assertEquals(expectedMessage, body.error)
+    }
+
+    @Test
+    fun `register rejects blank email with specific message`() = testApp { client ->
+        val resp = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "", "password" to "test123"))
+        }
+        assertBadRequest(client, resp, "Email не указан")
+    }
+
+    @Test
+    fun `register rejects malformed email with specific message`() = testApp { client ->
+        val resp = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "not-an-email", "password" to "test123"))
+        }
+        assertBadRequest(client, resp, "Email некорректный")
+    }
+
+    @Test
+    fun `register rejects short password with specific message`() = testApp { client ->
+        val resp = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "short@example.com", "password" to "12345"))
+        }
+        assertBadRequest(client, resp, "Пароль должен быть от 6 до 72 символов")
+    }
+
+    @Test
+    fun `register rejects overlong password with specific message`() = testApp { client ->
+        val resp = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "long@example.com", "password" to "x".repeat(73)))
+        }
+        assertBadRequest(client, resp, "Пароль должен быть от 6 до 72 символов")
+    }
+
+    @Test
+    fun `register rejects overlong displayName with specific message`() = testApp { client ->
+        val resp = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                mapOf(
+                    "email" to "name@example.com",
+                    "password" to "test123",
+                    "displayName" to "x".repeat(101),
+                ),
+            )
+        }
+        assertBadRequest(client, resp, "Имя слишком длинное")
+    }
+
+    @Test
+    fun `login with blank fields returns 400 without detail`() = testApp { client ->
+        val resp = client.post("/api/auth/login") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "", "password" to ""))
+        }
+        assertBadRequest(client, resp, "Некорректный запрос")
+    }
+
+    @Test
+    fun `create wishlist rejects blank title with specific message`() = testApp { client ->
+        val auth = client.register("wlblank@example.com")
+        val resp = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("   "))
+        }
+        assertBadRequest(client, resp, "Название списка обязательно")
+    }
+
+    @Test
+    fun `create wishlist rejects overlong title with specific message`() = testApp { client ->
+        val auth = client.register("wllong@example.com")
+        val resp = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("x".repeat(201)))
+        }
+        assertBadRequest(client, resp, "Название списка слишком длинное")
+    }
+
+    @Test
+    fun `create wishlist rejects invalid coverColor with specific message`() = testApp { client ->
+        val auth = client.register("wlcolor@example.com")
+        val resp = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Title", null, 99))
+        }
+        assertBadRequest(client, resp, "Некорректный цвет списка")
+    }
+
+    @Test
+    fun `create wish rejects invalid currency with specific message`() = testApp { client ->
+        val auth = client.register("wishcurrency@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", currency = "RUBLE"))
+        }
+        assertBadRequest(client, resp, "Валюта некорректная (ожидается код ISO 4217, например RUB)")
+    }
+
+    // ── Regression: серверная нормализация совпадает с клиентской ────────
+    // (codex P2 x2 — "Normalize currency/URL before validating")
+    //
+    // App принимает `usd` и `example.com` raw — без server-side нормализации
+    // легитимные значения reject'ились бы 400, и SyncManager бесконечно ретраил.
+
+    @Test
+    fun `create wish accepts lowercase currency and normalizes to uppercase`() = testApp { client ->
+        val auth = client.register("wishlowcurrency@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", currency = "usd"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("USD", dto.currency) // нормализовано
+    }
+
+    @Test
+    fun `create wish accepts schemeless URL and normalizes to https`() = testApp { client ->
+        val auth = client.register("wishschemeless@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "example.com/item"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("https://example.com/item", dto.url) // нормализовано
+    }
+
+    @Test
+    fun `update wish accepts lowercase currency and schemeless url`() = testApp { client ->
+        val auth = client.register("wishupdatenorm@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val wish: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish"))
+        }.body()
+        val resp = client.patch("/api/wishes/${wish.id}") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(UpdateWishRequest(title = "Wish", currency = "eur", url = "shop.example"))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status, "Expected 200, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        assertEquals("EUR", dto.currency)
+        assertEquals("https://shop.example", dto.url)
+    }
+
+    // ── Regression: scheme detection должен быть case-insensitive + reject не-HTTP ──
+    // (codex P2 — "Preserve existing URL schemes during normalization")
+
+    @Test
+    fun `create wish preserves uppercase HTTPS scheme without corrupting url`() = testApp { client ->
+        val auth = client.register("wishuppercase@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "HTTPS://shop.example/item"))
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "Expected 201, got ${resp.status}")
+        val dto: WishDto = resp.body()
+        // Не должно быть "https://HTTPS://..." — схема распознана, URL сохранён как есть.
+        assertEquals("HTTPS://shop.example/item", dto.url)
+    }
+
+    @Test
+    fun `create wish rejects non-HTTP scheme with specific message`() = testApp { client ->
+        val auth = client.register("wishftp@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "ftp://shop.example/file"))
+        }
+        assertBadRequest(client, resp, "URL должен использовать схему http:// или https://")
+    }
+
+    // ── Regression: scheme без // (javascript:, mailto:) не должен fall-through ──
+    // (codex P2 — "Reject URI schemes without slashes before prefixing")
+    @Test
+    fun `create wish rejects javascript scheme without corrupting url`() = testApp { client ->
+        val auth = client.register("wishjs@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "javascript:alert(1)"))
+        }
+        // Без расширенного regex это fall-through'нуло бы в https://javascript:alert(1)
+        // и сохранило corrupted/XSS-payload. Теперь reject'ится чисто.
+        assertBadRequest(client, resp, "URL должен использовать схему http:// или https://")
+    }
+
+    @Test
+    fun `create wish rejects invalid status with specific message`() = testApp { client ->
+        val auth = client.register("wishstatus@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", status = "FOO"))
+        }
+        assertBadRequest(client, resp, "Статус некорректный")
+    }
+
+    @Test
+    fun `create wish rejects negative price with specific message`() = testApp { client ->
+        val auth = client.register("wishprice@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", price = -50.0))
+        }
+        assertBadRequest(client, resp, "Цена некорректная")
+    }
+
+    @Test
+    fun `update wish status rejects unknown status with specific message`() = testApp { client ->
+        val auth = client.register("wishstatuspatch@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val wish: WishDto = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish"))
+        }.body()
+        val resp = client.patch("/api/wishes/${wish.id}/status") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("status" to "BOGUS"))
+        }
+        assertBadRequest(client, resp, "Статус некорректный")
     }
 }

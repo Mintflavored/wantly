@@ -5,6 +5,7 @@ import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
 import com.nervs.wantly.backend.db.Wishes
 import com.nervs.wantly.backend.db.Wishlists
 import com.nervs.wantly.backend.dto.*
+import com.nervs.wantly.backend.validation.validate
 import io.ktor.http.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
@@ -43,6 +44,7 @@ fun Route.wishlistRoutes() {
             post {
                 val uid = call.userId()!!
                 val req = call.receive<CreateWishlistRequest>()
+                req.validate()
                 val id = dbQuery {
                     Wishlists.insert {
                         it[ownerId] = uid
@@ -91,6 +93,7 @@ fun Route.wishlistRoutes() {
                 val listId = call.parameters["id"]?.toLongOrNull()
                     ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
                 val req = call.receive<UpdateWishlistRequest>()
+                req.validate()
                 // PUT-стиль: перезаписываем все редактируемые поля. isShared
                 // остаётся серверным (как в CreateWishlistRequest). ownership через
                 // WHERE (id, ownerId) → 404 если чужой (don't leak existence).

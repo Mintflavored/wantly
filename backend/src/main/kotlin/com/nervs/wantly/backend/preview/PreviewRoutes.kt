@@ -1,10 +1,9 @@
 package com.nervs.wantly.backend.preview
 
 import com.nervs.wantly.backend.auth.userId
-import com.nervs.wantly.backend.dto.ErrorResponse
 import com.nervs.wantly.backend.dto.PreviewRequest
 import com.nervs.wantly.backend.dto.PreviewResponse
-import io.ktor.http.*
+import com.nervs.wantly.backend.validation.validate
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -16,11 +15,7 @@ fun Route.previewRoutes() {
             // Вызов userId() гарантирует аутентификацию
             call.userId()
             val req = call.receive<PreviewRequest>()
-
-            if (req.url.isBlank()) {
-                call.respond(HttpStatusCode.BadRequest, ErrorResponse("URL не указан"))
-                return@post
-            }
+            req.validate() // blank/length; scheme-формат остаётся в PreviewService
 
             val result = PreviewService.fetch(req.url)
             call.respond(result)

@@ -49,6 +49,12 @@
     <string name="action_add_to_list">Добавить в список</string>
     <string name="cd_edit">Изменить</string>
 
+    <!-- Ошибка синхронизации (HTTP 400 — сервер отверг row) -->
+    <string name="cd_sync_error">Ошибка синхронизации</string>
+    <string name="sync_error_message">Не удалось сохранить на сервер. Откройте редактирование и проверьте поля.</string>
+    <string name="sync_error_action_edit">Изменить</string>
+    <string name="sync_error_action_dismiss">Позже</string>
+
     <!-- Ошибки распознавания ссылки -->
     <string name="error_invalid_url">Похоже, это не ссылка. Проверьте адрес.</string>
     <string name="error_load_failed">Не удалось загрузить страницу</string>

@@ -22,15 +22,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -54,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nervs.wantly.R
 import com.nervs.wantly.data.local.WishlistWithCount
+import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.ui.components.WishlistFormDialog
 import com.nervs.wantly.ui.rememberAppViewModel
@@ -67,9 +74,14 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
     var showCreate by remember { mutableStateOf(false) }
     var wishlistToDelete by remember { mutableStateOf<WishlistEntity?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val syncErrorMessage = stringResource(R.string.sync_error_message)
+    val syncErrorEdit = stringResource(R.string.sync_error_action_edit)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             LargeTopAppBar(
                 title = {
@@ -113,6 +125,18 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
                         item = item,
                         onClick = { onWishlistClick(item.wishlist.id) },
                         onLongClick = { wishlistToDelete = item.wishlist },
+                        onSyncError = {
+                            scope.launch {
+                                val result = snackbarHostState.showSnackbar(
+                                    message = syncErrorMessage,
+                                    actionLabel = syncErrorEdit,
+                                    duration = SnackbarDuration.Long,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    onWishlistClick(item.wishlist.id)
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -149,6 +173,7 @@ private fun WishlistRow(
     item: WishlistWithCount,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onSyncError: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val accent = WishlistAccents[item.wishlist.coverColor % WishlistAccents.size]
@@ -193,6 +218,17 @@ private fun WishlistRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+            // syncError: сервер отверг список (HTTP 400). Иконка → Snackbar с пояснением.
+            if (item.wishlist.syncError) {
+                IconButton(onClick = onSyncError) {
+                    Icon(
+                        Icons.Default.CloudOff,
+                        contentDescription = stringResource(R.string.cd_sync_error),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
             }
             Text(
                 countLabel,

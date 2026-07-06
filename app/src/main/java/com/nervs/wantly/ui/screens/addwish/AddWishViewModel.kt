@@ -2,6 +2,7 @@ package com.nervs.wantly.ui.screens.addwish
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.data.FieldLimits
 import com.nervs.wantly.data.GuestCounter
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
@@ -28,7 +29,47 @@ data class AddWishUiState(
     /** true = редактируем существующий wish (prefill + update); false = создание. */
     val isEditMode: Boolean = false,
 ) {
-    val canSave: Boolean get() = title.isNotBlank()
+    /**
+     * Кнопка Save активна только когда все обязательные поля валидны по серверным
+     * правилам. Без этих проверок UI позволил бы сохранить ftp://-URL или `руб`-
+     * валюту → бэкенд 400 → SyncManager бесконечно ретраит → блокирует logout.
+     * Правила — зеркало backend validation/Validators.kt.
+     */
+    val canSave: Boolean
+        get() = title.isNotBlank() &&
+            isValidUrl(url) &&
+            isValidUrl(imageUrl) &&
+            // Нормализуем перед regex-match: старые wish'ы могли хранить lowercase
+            // валюту (до PR #9), и prefill копирует её как есть. Backend тоже
+            // normalizes (trim+uppercase) — canSave должен быть симметричен.
+            currency.trim().uppercase().matches(CURRENCY_REGEX)
+
+    /**
+     * Пустой URL ок (поле optional). Непустой нормализуется как backend
+     * (normalizeWishUrl): schemeless → https:// prefix, не-HTTP схемы (ftp/javascript)
+     * reject'ятся. Так UI принимает `example.com` (как раньше), но не `ftp://`.
+     */
+    private fun isValidUrl(value: String): Boolean {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return true
+        // Scheme detection — case-insensitive, покрываем оба варианта:
+        //   - scheme:// (http://, https://, ftp://, ...)
+        //   - scheme: без // (mailto:, javascript:, data:, ...)
+        // Зеркало backend normalizeWishUrl — иначе javascript:alert(1) счёлся бы
+        // schemeless, получил https:// prefix и прошёл canSave, а сервер reject'нул бы.
+        val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:(?://)?").find(trimmed)
+        val normalized = when {
+            schemeMatch == null -> "https://$trimmed"
+            schemeMatch.value.lowercase() in setOf("http://", "https://") -> trimmed
+            else -> return false // не-HTTP схема
+        }
+        val lower = normalized.lowercase()
+        return lower.startsWith("http://") || lower.startsWith("https://")
+    }
+
+    private companion object {
+        val CURRENCY_REGEX = Regex("^[A-Z]{3}$")
+    }
 }
 
 class AddWishViewModel(
@@ -68,15 +109,20 @@ class AddWishViewModel(
         }
     }
 
-    fun onUrlChange(v: String) = update { copy(url = v) }
-    fun onTitleChange(v: String) = update { copy(title = v) }
-    fun onDescriptionChange(v: String) = update { copy(description = v) }
+    fun onUrlChange(v: String) = update { copy(url = FieldLimits.clamp(v, FieldLimits.URL_MAX)) }
+    fun onTitleChange(v: String) = update { copy(title = FieldLimits.clamp(v, FieldLimits.WISH_TITLE_MAX)) }
+    fun onDescriptionChange(v: String) =
+        update { copy(description = FieldLimits.clamp(v, FieldLimits.WISH_DESCRIPTION_MAX)) }
     fun onPriceChange(v: String) = update {
         copy(price = v.filter { it.isDigit() || it == '.' || it == ',' || it == ' ' })
     }
-    fun onCurrencyChange(v: String) = update { copy(currency = v) }
-    fun onStoreChange(v: String) = update { copy(storeName = v) }
-    fun onImageUrlChange(v: String) = update { copy(imageUrl = v) }
+    fun onCurrencyChange(v: String) = update {
+        // Trim+uppercase ДО take(3): иначе вставка " usd" обрезается в " us" →
+        // backend нормализует в "US" → 400 (длина 2) → бесконечный retry.
+        copy(currency = v.trim().uppercase().take(3))
+    }
+    fun onStoreChange(v: String) = update { copy(storeName = FieldLimits.clamp(v, FieldLimits.WISH_STORE_MAX)) }
+    fun onImageUrlChange(v: String) = update { copy(imageUrl = FieldLimits.clamp(v, FieldLimits.URL_MAX)) }
 
     fun recognize() {
         val url = _uiState.value.url.trim()
@@ -89,12 +135,19 @@ class AddWishViewModel(
                 st.copy(
                     isParsing = false,
                     error = if (!preview.success && preview.title == null) preview.error else null,
-                    title = preview.title ?: st.title,
-                    description = preview.description ?: st.description,
+                    // Clamps дублируют onValueChange: preview-сервис может вернуть
+                    // поля длиннее серверных caps → без clamp save даст 400 и wish
+                    // зависнет в retry.
+                    title = preview.title?.let { FieldLimits.clamp(it, FieldLimits.WISH_TITLE_MAX) } ?: st.title,
+                    description = preview.description?.let {
+                        FieldLimits.clamp(it, FieldLimits.WISH_DESCRIPTION_MAX)
+                    } ?: st.description,
                     price = preview.price?.let { numberForField(it) } ?: st.price,
-                    currency = preview.currency ?: st.currency,
-                    storeName = preview.storeName ?: st.storeName,
-                    imageUrl = preview.imageUrl ?: st.imageUrl,
+                    currency = preview.currency?.trim()?.uppercase()?.take(3) ?: st.currency,
+                    storeName = preview.storeName?.let {
+                        FieldLimits.clamp(it, FieldLimits.WISH_STORE_MAX)
+                    } ?: st.storeName,
+                    imageUrl = preview.imageUrl?.let { FieldLimits.clamp(it, FieldLimits.URL_MAX) } ?: st.imageUrl,
                     url = preview.url,
                 )
             }
@@ -104,12 +157,24 @@ class AddWishViewModel(
     fun save(onDone: () -> Unit) {
         val st = _uiState.value
         if (!st.canSave) return
+        val rawPrice = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull()
+        // Clamp цены: серверный validation reject'ит NaN/negative/over-limit с 400,
+        // а SyncManager не различает validation-400 от transient → бесконечный retry.
+        // Null (поле пустое) оставляем как есть — цена optional.
+        val clampedPrice = rawPrice?.let {
+            when {
+                it.isNaN() || it.isInfinite() -> 0.0
+                it < 0 -> 0.0
+                it > FieldLimits.PRICE_MAX -> FieldLimits.PRICE_MAX
+                else -> it
+            }
+        }
         val draft = WishDraft(
             title = st.title.trim(),
             description = st.description.ifBlank { null },
             url = st.url.ifBlank { null },
             imageUrl = st.imageUrl.ifBlank { null },
-            price = st.price.replace(",", ".").replace(" ", "").toDoubleOrNull(),
+            price = clampedPrice,
             currency = st.currency.ifBlank { "RUB" },
             storeName = st.storeName.ifBlank { null },
         )
