@@ -673,6 +673,26 @@ class ApplicationTest {
         assertBadRequest(client, resp, "URL должен использовать схему http:// или https://")
     }
 
+    // ── Regression: scheme без // (javascript:, mailto:) не должен fall-through ──
+    // (codex P2 — "Reject URI schemes without slashes before prefixing")
+    @Test
+    fun `create wish rejects javascript scheme without corrupting url`() = testApp { client ->
+        val auth = client.register("wishjs@example.com")
+        val list: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        val resp = client.post("/api/wishlists/${list.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Wish", url = "javascript:alert(1)"))
+        }
+        // Без расширенного regex это fall-through'нуло бы в https://javascript:alert(1)
+        // и сохранило corrupted/XSS-payload. Теперь reject'ится чисто.
+        assertBadRequest(client, resp, "URL должен использовать схему http:// или https://")
+    }
+
     @Test
     fun `create wish rejects invalid status with specific message`() = testApp { client ->
         val auth = client.register("wishstatus@example.com")

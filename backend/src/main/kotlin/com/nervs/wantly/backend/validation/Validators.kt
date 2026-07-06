@@ -175,8 +175,12 @@ fun normalizeWishUrl(raw: String?): String? {
     if (raw == null) return null
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return null
-    // Scheme detection — case-insensitive. Регэксп покрывает scheme:// prefix.
-    val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").find(trimmed)
+    // Scheme detection — case-insensitive. Покрываем ОБО варианта:
+    //   - scheme:// (http://, https://, ftp://, ...)
+    //   - scheme: без // (mailto:, javascript:, data:, ...)
+    // Без второго regex `javascript:alert(1)` счёл бы schemeless и превратилось
+    // бы в `https://javascript:alert(1)` — corrupted + потенциальный XSS-payload.
+    val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:(?://)?").find(trimmed)
     return when {
         schemeMatch == null -> "https://$trimmed" // schemeless → добавляем
         schemeMatch.value.lowercase() in setOf("http://", "https://") -> trimmed // ок
