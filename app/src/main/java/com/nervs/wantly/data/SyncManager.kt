@@ -365,10 +365,23 @@ class SyncManager(
         // 2. CREATE/UPDATE wishlists
         for (list in listDao.getUnsynced()) {
             if (list.serverId == null) {
-                // Новая — POST
-                val remote = apiCall {
+                // Новая — POST. Явный try/catch (вместо apiCall, который глотает
+                // ApiException) — иначе 400 нельзя отличить от network-ошибки и
+                // пометить row как syncError.
+                val remote = try {
                     api.createWishlist(CreateWishlistRequest(list.title, list.description, list.coverColor))
-                } ?: continue
+                } catch (e: ApiException) {
+                    when (e.code) {
+                        401 -> lastSyncSaw401 = true
+                        // 400 = validation/bad-request. Retry бесполезен — mark syncError
+                        // (synced=1, выпадает из getUnsynced) → не блокирует logout.
+                        // Пользователь редактирует → updateEditableFields сбрасывает флаг.
+                        400 -> listDao.markSyncError(list.id)
+                    }
+                    continue
+                } catch (e: Exception) {
+                    continue
+                }
                 // serverId сохраняется ВСЕГДА; synced — только если PATCH-поля не
                 // изменились и нет pendingDelete. Даже если список удалён или
                 // отредактирован во время POST, мы знаем serverId для PATCH/DELETE.
@@ -419,6 +432,8 @@ class SyncManager(
                             // logout. Outer pushPending/pushAndDrain loop POSTнет в след.витке.
                             pushPendingScheduled.set(true)
                         }
+                        // 400 = validation/bad-request. Retry бесполезен.
+                        400 -> listDao.markSyncError(list.id)
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }
@@ -464,6 +479,8 @@ class SyncManager(
                             // проходе.
                             pushPendingScheduled.set(true)
                         }
+                        // 400 = validation/bad-request. Retry бесполезен — mark syncError.
+                        400 -> wishDao.markSyncError(wish.id)
                     }
                     continue
                 } catch (e: Exception) {
@@ -556,6 +573,8 @@ class SyncManager(
                             // заблокирует logout. Outer loop POSTнет в следующем витке.
                             pushPendingScheduled.set(true)
                         }
+                        // 400 = validation/bad-request. Retry бесполезен.
+                        400 -> wishDao.markSyncError(wish.id)
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }

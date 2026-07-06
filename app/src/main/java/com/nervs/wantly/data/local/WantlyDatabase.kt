@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -76,6 +76,20 @@ abstract class WantlyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 4→5: добавлен syncError (BOOLEAN DEFAULT 0) на обе таблицы.
+         *
+         * Флаг terminal-ошибки синхронизации: HTTP 400 от сервера → row помечается
+         * synced=1 + syncError=1, перестаёт retry'иться и не блокирует logout.
+         * Существующие строки получают syncError=0 — корректно (нет ошибки).
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN syncError INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN syncError INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** Маркер в DataStore, что backfill ownerEmail после миграции выполнен. */
         const val BACKFILL_KEY = "v3_owner_backfill_done"
 
@@ -86,7 +100,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

@@ -40,13 +40,14 @@ interface WishlistDao {
     @Update
     suspend fun update(wishlist: WishlistEntity)
 
-    @Query("UPDATE wishlists SET pendingDelete = 1, synced = 0 WHERE id = :id")
+    @Query("UPDATE wishlists SET pendingDelete = 1, synced = 0, syncError = 0 WHERE id = :id")
     suspend fun markDeleted(id: Long)
 
     /**
-     * Partial update: только редактируемые поля + synced=0. Не трогает serverId,
-     * createdAt, ownerEmail, isShared — защита от race, когда сущность устарела
-     * относительно Room (например background-sync уже проставил serverId).
+     * Partial update: только редактируемые поля + synced=0 + syncError=0
+     * (любое редактирование сбрасывает terminal-error и снова делает row dirty
+     * для повторного sync). Не трогает serverId, createdAt, ownerEmail, isShared —
+     * защита от race, когда сущность устарела относительно Room.
      */
     @Query(
         """
@@ -54,7 +55,8 @@ interface WishlistDao {
             title = :title,
             description = :description,
             coverColor = :coverColor,
-            synced = 0
+            synced = 0,
+            syncError = 0
         WHERE id = :id
         """,
     )
@@ -158,6 +160,15 @@ interface WishlistDao {
      */
     @Query("UPDATE wishlists SET serverId = NULL, synced = 0 WHERE id = :id")
     suspend fun detachServerId(id: Long)
+
+    /**
+     * Помечает row как synced + syncError — HTTP 400 от сервера (validation или
+     * иной bad-request). Row выпадает из getUnsynced() → перестаёт retry'иться
+     * и не блокирует pushPendingVerifiedForLogout. Пользователь редактирует →
+     * updateEditableFields/markDeleted сбрасывают syncError.
+     */
+    @Query("UPDATE wishlists SET synced = 1, syncError = 1 WHERE id = :id")
+    suspend fun markSyncError(id: Long)
 
     @Query("DELETE FROM wishlists")
     suspend fun clearAll()

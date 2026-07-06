@@ -294,6 +294,89 @@ class SyncManagerTest {
         assertThat(db.wishlistDao().getUnsynced()).hasSize(1)
     }
 
+    // ── Regression: HTTP 400 → syncError, не блокирует logout ─────────────
+    // (fixes codex P1 из PR #9 — legacy dirty wishes retrying forever)
+
+    @Test
+    fun `pushPending marks wish with syncError on 400 update`() = runTest {
+        // Существующий synced wish → редактируется (textDirty=true → full PATCH) → сервер 400.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 10, wishlistId = 1, title = "W", serverId = 500, synced = false, textDirty = true),
+        )
+        val rejectingApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { updateWish(any(), any()) } throws com.nervs.wantly.data.remote.ApiException(400, "validation")
+        }
+        val rejectingSync = SyncManager(db, rejectingApi)
+
+        rejectingSync.pushPending()
+
+        // Row помечен syncError + synced → выпадает из getUnsynced, не retry'ится.
+        val saved = db.wishDao().getById(10)!!
+        assertThat(saved.syncError).isTrue()
+        assertThat(saved.synced).isTrue()
+        assertThat(db.wishDao().getUnsynced()).isEmpty()
+    }
+
+    @Test
+    fun `pushPending marks wishlist with syncError on 400 create`() = runTest {
+        db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
+        val rejectingApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { createWishlist(any()) } throws com.nervs.wantly.data.remote.ApiException(400, "validation")
+        }
+        val rejectingSync = SyncManager(db, rejectingApi)
+
+        rejectingSync.pushPending()
+
+        val saved = db.wishlistDao().getAll().first()
+        assertThat(saved.syncError).isTrue()
+        assertThat(saved.synced).isTrue()
+        assertThat(db.wishlistDao().getUnsynced()).isEmpty()
+    }
+
+    @Test
+    fun `pushPendingVerifiedForLogout returns SUCCESS when only syncError rows remain`() = runTest {
+        // Row уже помечен syncError (как будто предыдущий push получил 400).
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 100, synced = true, syncError = true),
+        )
+        // API не вызывается — нет unsynced rows.
+        val outcome = sync.pushPendingVerifiedForLogout()
+
+        assertThat(outcome).isEqualTo(LogoutSyncOutcome.SUCCESS)
+        assertThat(db.wishlistDao().getUnsynced()).isEmpty()
+    }
+
+    @Test
+    fun `editing a syncError wish clears the flag and marks dirty for resync`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(
+                wishlistId = listId, title = "Old", serverId = 500,
+                synced = true, syncError = true,
+            ),
+        )
+        val repo = com.nervs.wantly.data.repository.WishlistRepository(
+            wishlistDao = db.wishlistDao(),
+            wishDao = db.wishDao(),
+            linkPreviewService = mockk(relaxed = true),
+            api = api,
+            sessionManager = mockk(relaxed = true),
+        )
+
+        repo.updateWish(
+            db.wishDao().getById(wishId)!!,
+            com.nervs.wantly.data.model.WishDraft(title = "Fixed"),
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.syncError).isFalse()
+        assertThat(saved.synced).isFalse()
+        assertThat(saved.title).isEqualTo("Fixed")
+    }
+
     @Test
     fun `logout flush returns AUTH_EXPIRED on 401`() = runTest {
         val expiredApi = mockk<WantlyApi>(relaxed = true) {

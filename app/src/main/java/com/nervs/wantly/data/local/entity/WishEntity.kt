@@ -48,4 +48,9 @@ data class WishEntity(
      * Сбрасывается после успешного full PATCH. updateStatus НЕ трогает этот флаг.
      */
     @ColumnInfo(name = "textDirty", defaultValue = "0") val textDirty: Boolean = false,
+    /**
+     * true = сервер reject'нул row с HTTP 400 (validation или иной bad-request).
+     * См. [WishlistEntity.syncError] — семантика и lifecycle идентичны.
+     */
+    @ColumnInfo(name = "syncError", defaultValue = "0") val syncError: Boolean = false,
 )
