@@ -52,7 +52,12 @@ data class AddWishUiState(
     private fun isValidUrl(value: String): Boolean {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) return true
-        val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").find(trimmed)
+        // Scheme detection — case-insensitive, покрываем оба варианта:
+        //   - scheme:// (http://, https://, ftp://, ...)
+        //   - scheme: без // (mailto:, javascript:, data:, ...)
+        // Зеркало backend normalizeWishUrl — иначе javascript:alert(1) счёлся бы
+        // schemeless, получил https:// prefix и прошёл canSave, а сервер reject'нул бы.
+        val schemeMatch = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:(?://)?").find(trimmed)
         val normalized = when {
             schemeMatch == null -> "https://$trimmed"
             schemeMatch.value.lowercase() in setOf("http://", "https://") -> trimmed
