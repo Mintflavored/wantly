@@ -6,6 +6,7 @@ import com.nervs.wantly.backend.auth.authRoutes
 import com.nervs.wantly.backend.db.DatabaseFactory
 import com.nervs.wantly.backend.dto.ErrorResponse
 import com.nervs.wantly.backend.preview.previewRoutes
+import com.nervs.wantly.backend.wishlist.sharedWishlistRoutes
 import com.nervs.wantly.backend.wishlist.wishRoutes
 import com.nervs.wantly.backend.wishlist.wishlistRoutes
 import io.ktor.http.*
@@ -126,5 +127,8 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
         wishlistRoutes()
         wishRoutes()
         previewRoutes()
+        // Публичный доступ к shared wishlist — БЕЗ authenticate (как /health).
+        // Только isShared=true списки доступны через share_token.
+        sharedWishlistRoutes()
     }
 }
