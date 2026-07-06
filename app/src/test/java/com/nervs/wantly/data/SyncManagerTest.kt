@@ -973,6 +973,43 @@ class SyncManagerTest {
         assertThat(all[0].synced).isTrue()
     }
 
+    // ── Regression: pull не должен перезаписывать syncError row ──────────
+    // (codex P2 — "Keep sync-error rows out of pull overwrites")
+    @Test
+    fun `pull does not overwrite syncError wishlist with stale server data`() = runTest {
+        // Локальный wishlist отвергнут сервером (400) — syncError=true.
+        // Пользователь ещё не исправил поля. Сервер хранит старую версию.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 5, title = "User edit", serverId = 42, synced = true, syncError = true),
+        )
+        fakeApi.seed(WishlistDto(id = 42, title = "Stale server title"))
+
+        sync.pullInternal()
+
+        // Локальные поля пользователя сохранены — pull не затёр их серверной версией.
+        val saved = db.wishlistDao().getById(5)!!
+        assertThat(saved.title).isEqualTo("User edit")
+        assertThat(saved.syncError).isTrue()
+    }
+
+    @Test
+    fun `pull does not delete syncError wish absent on server`() = runTest {
+        // syncError wish с serverId, которого НЕТ на сервере. Pull не должен
+        // удалить его (иначе данные пользователя потеряны до исправления).
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "L", serverId = 10, synced = true),
+        )
+        db.wishDao().insertWithId(
+            WishEntity(id = 5, wishlistId = 1, title = "Bad", serverId = 99, synced = true, syncError = true),
+        )
+        fakeApi.seed(WishlistDto(id = 10, title = "L")) // без wish 99
+
+        sync.pullInternal()
+
+        // syncError wish не удалён — юзер может его исправить.
+        assertThat(db.wishDao().getById(5)).isNotNull()
+    }
+
     // ── pullInternal prunes серверные удаления ───────────────────────
 
     @Test

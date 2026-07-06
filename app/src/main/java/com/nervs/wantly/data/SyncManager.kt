@@ -636,15 +636,17 @@ class SyncManager(
             // === 1. UPSERT wishlists ===
             // Серверные данные обновляют существующие локальные записи по serverId,
             // сохраняя стабильный локальный PK (навигация и ViewModel держат его).
-            // Tombstone (pendingDelete) и dirty (!synced) не трогаем — их
-            // обработает push, перетирать нельзя.
+            // Tombstone (pendingDelete), dirty (!synced) и syncError не трогаем —
+            // их обработает push, перетирать нельзя. syncError особенно важен: pull
+            // не должен затирать отвергнутые сервером поля старой серверной версией,
+            // иначе юзер потеряет значения, которые хотел бы исправить.
             val remoteListIds = mutableSetOf<Long>()
             for (detail in details) {
                 val remote = detail.wishlist
                 remoteListIds.add(remote.id)
                 val existing = wishlistDao.getByServerId(remote.id)
                 if (existing != null) {
-                    if (existing.pendingDelete || !existing.synced) continue
+                    if (existing.pendingDelete || !existing.synced || existing.syncError) continue
                     wishlistDao.update(existing.copy(
                         title = remote.title,
                         description = remote.description,
@@ -670,9 +672,9 @@ class SyncManager(
             //     следующем pull после успешного push.
             for (list in wishlistDao.getAll()) {
                 val sid = list.serverId ?: continue
-                if (sid in remoteListIds || list.pendingDelete || !list.synced) continue
+                if (sid in remoteListIds || list.pendingDelete || !list.synced || list.syncError) continue
                 val hasDirtyChildren = wishDao.getAll().any {
-                    it.wishlistId == list.id && (!it.synced || it.pendingDelete)
+                    it.wishlistId == list.id && (!it.synced || it.pendingDelete || it.syncError)
                 }
                 if (hasDirtyChildren) {
                     // Parent удалён на сервере, но есть локальные изменения.
@@ -693,7 +695,7 @@ class SyncManager(
                     remoteWishIds.add(remote.id)
                     val existing = wishDao.getByServerId(remote.id)
                     if (existing != null) {
-                        if (existing.pendingDelete || !existing.synced) continue
+                        if (existing.pendingDelete || !existing.synced || existing.syncError) continue
                         wishDao.update(existing.copy(
                             wishlistId = wishlistLocalId,
                             title = remote.title,
@@ -729,7 +731,7 @@ class SyncManager(
             //     Пропускаем tombstone и dirty (как и для wishlists выше).
             for (wish in wishDao.getAll()) {
                 val sid = wish.serverId ?: continue
-                if (sid in remoteWishIds || wish.pendingDelete || !wish.synced) continue
+                if (sid in remoteWishIds || wish.pendingDelete || !wish.synced || wish.syncError) continue
                 wishDao.deleteById(wish.id)
             }
 
