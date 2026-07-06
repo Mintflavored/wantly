@@ -166,9 +166,28 @@ interface WishlistDao {
      * иной bad-request). Row выпадает из getUnsynced() → перестаёт retry'иться
      * и не блокирует pushPendingVerifiedForLogout. Пользователь редактирует →
      * updateEditableFields/markDeleted сбрасывают syncError.
+     *
+     * Snapshot-guard (как markSyncedIfUnchanged): пока PATCH/POST в полёте, юзер
+     * мог исправить поле → updateEditableFields уже выставил synced=0, syncError=0.
+     * Безусловный markSyncError затёр бы этот фикс. Применяем только если поля
+     * совпадают с тем, что было отправлено на сервер.
      */
-    @Query("UPDATE wishlists SET synced = 1, syncError = 1 WHERE id = :id")
-    suspend fun markSyncError(id: Long)
+    @Query(
+        """
+        UPDATE wishlists SET synced = 1, syncError = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND coverColor = :expectedCoverColor
+        """,
+    )
+    suspend fun markSyncError(
+        id: Long,
+        expectedTitle: String,
+        expectedCoverColor: Int,
+        expectedDescription: String?,
+    )
 
     @Query("DELETE FROM wishlists")
     suspend fun clearAll()

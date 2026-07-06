@@ -377,6 +377,82 @@ class SyncManagerTest {
         assertThat(saved.title).isEqualTo("Fixed")
     }
 
+    // ── Regression: markSyncError не должен перезаписывать более свежий edit ──
+    // (codex P1 — "Guard sync-error marking against newer edits")
+    @Test
+    fun `markSyncError does not overwrite a newer edit on wishlist`() = runTest {
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "Bad", serverId = 100, synced = false),
+        )
+        // Пока PATCH летел (со snapshot "Bad"), юзер уже исправил на "Fixed".
+        db.wishlistDao().updateEditableFields(1, "Fixed", null, 0)
+
+        db.wishlistDao().markSyncError(
+            id = 1,
+            expectedTitle = "Bad", // не совпадает с актуальным "Fixed"
+            expectedCoverColor = 0,
+            expectedDescription = null,
+        )
+
+        val saved = db.wishlistDao().getById(1)!!
+        assertThat(saved.syncError).isFalse() // фикс не затёрт
+        assertThat(saved.synced).isFalse() // остался dirty для retry
+        assertThat(saved.title).isEqualTo("Fixed")
+    }
+
+    @Test
+    fun `markSyncError does not overwrite a newer edit on wish`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "L", serverId = 1, synced = true))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Bad", serverId = 500, synced = false, textDirty = true),
+        )
+        // Юзер фиксит поле пока PATCH летел.
+        db.wishDao().updateEditableFields(
+            id = wishId, title = "Fixed", description = null, url = null,
+            imageUrl = null, price = null, currency = "RUB", storeName = null,
+        )
+
+        db.wishDao().markSyncError(
+            id = wishId,
+            expectedTitle = "Bad", // не совпадает с актуальным "Fixed"
+            expectedDescription = null,
+            expectedUrl = null,
+            expectedImageUrl = null,
+            expectedPrice = null,
+            expectedCurrency = "RUB",
+            expectedStoreName = null,
+            expectedStatus = "WANTED",
+        )
+
+        val saved = db.wishDao().getById(wishId)!!
+        assertThat(saved.syncError).isFalse()
+        assertThat(saved.synced).isFalse()
+        assertThat(saved.title).isEqualTo("Fixed")
+    }
+
+    // ── Regression: parent 400 → children тоже syncError, не блокируют logout ──
+    // (codex P2 — "Resolve child wishes when parent create is terminal")
+    @Test
+    fun `pushPending marks children syncError when parent wishlist create gets 400`() = runTest {
+        // Новый wishlist с ребёнком. POST родителя получит 400.
+        val listLocalId = db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
+        db.wishDao().insert(WishEntity(wishlistId = listLocalId, title = "Child", synced = false))
+        val rejectingApi = mockk<WantlyApi>(relaxed = true) {
+            coEvery { createWishlist(any()) } throws com.nervs.wantly.data.remote.ApiException(400, "validation")
+        }
+        val rejectingSync = SyncManager(db, rejectingApi)
+
+        rejectingSync.pushPending()
+
+        // Оба — parent и child — помечены syncError → не блокируют logout.
+        val savedList = db.wishlistDao().getById(listLocalId)!!
+        assertThat(savedList.syncError).isTrue()
+        val savedChild = db.wishDao().getAll().first()
+        assertThat(savedChild.syncError).isTrue()
+        assertThat(db.wishlistDao().getUnsynced()).isEmpty()
+        assertThat(db.wishDao().getUnsynced()).isEmpty()
+    }
+
     @Test
     fun `logout flush returns AUTH_EXPIRED on 401`() = runTest {
         val expiredApi = mockk<WantlyApi>(relaxed = true) {

@@ -376,7 +376,31 @@ class SyncManager(
                         // 400 = validation/bad-request. Retry бесполезен — mark syncError
                         // (synced=1, выпадает из getUnsynced) → не блокирует logout.
                         // Пользователь редактирует → updateEditableFields сбрасывает флаг.
-                        400 -> listDao.markSyncError(list.id)
+                        // Snapshot-guard: если юзер уже фиксит поле, не перезаписываем.
+                        400 -> {
+                            listDao.markSyncError(
+                                list.id,
+                                expectedTitle = list.title,
+                                expectedCoverColor = list.coverColor,
+                                expectedDescription = list.description,
+                            )
+                            // P2: дети под этим списком никогда не уйдут (parent serverId
+                            // остался null → wishlist.serverId ?: continue в wish-loop).
+                            // Помечаем syncError и их, чтобы logout не висел на детях.
+                            for (child in wishDao.getAll().filter { it.wishlistId == list.id && !it.pendingDelete }) {
+                                wishDao.markSyncError(
+                                    child.id,
+                                    expectedTitle = child.title,
+                                    expectedDescription = child.description,
+                                    expectedUrl = child.url,
+                                    expectedImageUrl = child.imageUrl,
+                                    expectedPrice = child.price,
+                                    expectedCurrency = child.currency,
+                                    expectedStoreName = child.storeName,
+                                    expectedStatus = child.status,
+                                )
+                            }
+                        }
                     }
                     continue
                 } catch (e: Exception) {
@@ -433,7 +457,13 @@ class SyncManager(
                             pushPendingScheduled.set(true)
                         }
                         // 400 = validation/bad-request. Retry бесполезен.
-                        400 -> listDao.markSyncError(list.id)
+                        // Snapshot-guard: не перезаписываем, если юзер уже фиксит.
+                        400 -> listDao.markSyncError(
+                            list.id,
+                            expectedTitle = list.title,
+                            expectedCoverColor = list.coverColor,
+                            expectedDescription = list.description,
+                        )
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }
@@ -480,7 +510,18 @@ class SyncManager(
                             pushPendingScheduled.set(true)
                         }
                         // 400 = validation/bad-request. Retry бесполезен — mark syncError.
-                        400 -> wishDao.markSyncError(wish.id)
+                        // Snapshot-guard: не перезаписываем, если юзер уже фиксит.
+                        400 -> wishDao.markSyncError(
+                            wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
                     }
                     continue
                 } catch (e: Exception) {
@@ -574,7 +615,18 @@ class SyncManager(
                             pushPendingScheduled.set(true)
                         }
                         // 400 = validation/bad-request. Retry бесполезен.
-                        400 -> wishDao.markSyncError(wish.id)
+                        // Snapshot-guard: не перезаписываем, если юзер уже фиксит.
+                        400 -> wishDao.markSyncError(
+                            wish.id,
+                            expectedTitle = wish.title,
+                            expectedDescription = wish.description,
+                            expectedUrl = wish.url,
+                            expectedImageUrl = wish.imageUrl,
+                            expectedPrice = wish.price,
+                            expectedCurrency = wish.currency,
+                            expectedStoreName = wish.storeName,
+                            expectedStatus = wish.status,
+                        )
                     }
                     // Иначе (сетевая ошибка и т.п.) — оставляем dirty для retry.
                 }

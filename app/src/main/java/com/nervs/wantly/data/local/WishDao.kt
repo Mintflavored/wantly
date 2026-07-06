@@ -262,9 +262,37 @@ interface WishDao {
     /**
      * Помечает row как synced + syncError — HTTP 400 от сервера (validation или
      * иной bad-request). См. [WishlistDao.markSyncError] — семантика идентична.
+     *
+     * Snapshot-guard: пока PATCH/POST в полёте, юзер мог исправить поле →
+     * updateEditableFields уже выставил synced=0, syncError=0. Безусловный
+     * markSyncError затёр бы этот фикс. Применяем только если поля совпадают.
      */
-    @Query("UPDATE wishes SET synced = 1, syncError = 1 WHERE id = :id")
-    suspend fun markSyncError(id: Long)
+    @Query(
+        """
+        UPDATE wishes SET synced = 1, syncError = 1
+        WHERE id = :id
+          AND pendingDelete = 0
+          AND title = :expectedTitle
+          AND (description IS :expectedDescription)
+          AND (url IS :expectedUrl)
+          AND (imageUrl IS :expectedImageUrl)
+          AND (price IS :expectedPrice)
+          AND currency = :expectedCurrency
+          AND (storeName IS :expectedStoreName)
+          AND status = :expectedStatus
+        """,
+    )
+    suspend fun markSyncError(
+        id: Long,
+        expectedTitle: String,
+        expectedDescription: String?,
+        expectedUrl: String?,
+        expectedImageUrl: String?,
+        expectedPrice: Double?,
+        expectedCurrency: String,
+        expectedStoreName: String?,
+        expectedStatus: String,
+    )
 
     @Query("DELETE FROM wishes")
     suspend fun clearAll()
