@@ -373,34 +373,23 @@ class SyncManager(
                 } catch (e: ApiException) {
                     when (e.code) {
                         401 -> lastSyncSaw401 = true
-                        // 400 = validation/bad-request. Retry бесполезен — mark syncError
-                        // (synced=1, выпадает из getUnsynced) → не блокирует logout.
-                        // Пользователь редактирует → updateEditableFields сбрасывает флаг.
+                        // 400 = validation/bad-request на parent. Retry бесполезен —
+                        // mark syncError (synced=1, выпадает из getUnsynced).
                         // Snapshot-guard: если юзер уже фиксит поле, не перезаписываем.
-                        400 -> {
-                            listDao.markSyncError(
-                                list.id,
-                                expectedTitle = list.title,
-                                expectedCoverColor = list.coverColor,
-                                expectedDescription = list.description,
-                            )
-                            // P2: дети под этим списком никогда не уйдут (parent serverId
-                            // остался null → wishlist.serverId ?: continue в wish-loop).
-                            // Помечаем syncError и их, чтобы logout не висел на детях.
-                            for (child in wishDao.getAll().filter { it.wishlistId == list.id && !it.pendingDelete }) {
-                                wishDao.markSyncError(
-                                    child.id,
-                                    expectedTitle = child.title,
-                                    expectedDescription = child.description,
-                                    expectedUrl = child.url,
-                                    expectedImageUrl = child.imageUrl,
-                                    expectedPrice = child.price,
-                                    expectedCurrency = child.currency,
-                                    expectedStoreName = child.storeName,
-                                    expectedStatus = child.status,
-                                )
-                            }
-                        }
+                        //
+                        // ВАЖНО: детей НЕ трогаем. Они не виноваты в parent-only 400
+                        // (сервер их не видел). Если пометить их syncError, юзер починит
+                        // только parent → parent получит serverId, но дети останутся
+                        // synced=1/serverId=NULL → logout вытер бы Room без их отправки.
+                        // Дети остаются dirty (synced=0) → блокируют logout ровно до тех
+                        // пор, пока юзер не починит parent. После починки parent POST'ится,
+                        // получает serverId, и дети уходят следом в следующем push.
+                        400 -> listDao.markSyncError(
+                            list.id,
+                            expectedTitle = list.title,
+                            expectedCoverColor = list.coverColor,
+                            expectedDescription = list.description,
+                        )
                     }
                     continue
                 } catch (e: Exception) {

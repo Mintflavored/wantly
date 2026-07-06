@@ -431,10 +431,14 @@ class SyncManagerTest {
     }
 
     // ── Regression: parent 400 → children тоже syncError, не блокируют logout ──
-    // (codex P2 — "Resolve child wishes when parent create is terminal")
+    // ── Regression: parent 400 → дети остаются dirty, НЕ syncError ──────────
+    // (codex P1 pass 2 — "Do not mark child wishes terminal for parent-only 400")
+    //
+    // Parent-only 400: сервер не видел детей, они не виноваты. Помечать их syncError
+    // означало бы потерю после починки parent'а (logout вытер бы Room без их отправки).
+    // Дети остаются dirty → блокируют logout → после починки parent'а уходят следом.
     @Test
-    fun `pushPending marks children syncError when parent wishlist create gets 400`() = runTest {
-        // Новый wishlist с ребёнком. POST родителя получит 400.
+    fun `pushPending parent create 400 leaves children dirty not syncError`() = runTest {
         val listLocalId = db.wishlistDao().insert(WishlistEntity(title = "L", synced = false))
         db.wishDao().insert(WishEntity(wishlistId = listLocalId, title = "Child", synced = false))
         val rejectingApi = mockk<WantlyApi>(relaxed = true) {
@@ -444,13 +448,16 @@ class SyncManagerTest {
 
         rejectingSync.pushPending()
 
-        // Оба — parent и child — помечены syncError → не блокируют logout.
+        // Parent помечен syncError (его поля отверг сервер).
         val savedList = db.wishlistDao().getById(listLocalId)!!
         assertThat(savedList.syncError).isTrue()
+        assertThat(savedList.synced).isTrue()
+        // Дети остаются dirty — НЕ syncError. Они уйдут, как только parent получит serverId.
         val savedChild = db.wishDao().getAll().first()
-        assertThat(savedChild.syncError).isTrue()
-        assertThat(db.wishlistDao().getUnsynced()).isEmpty()
-        assertThat(db.wishDao().getUnsynced()).isEmpty()
+        assertThat(savedChild.syncError).isFalse()
+        assertThat(savedChild.synced).isFalse()
+        // Logout заблокирован (есть dirty children) — это правильно: данные реальные.
+        assertThat(db.wishDao().getUnsynced()).hasSize(1)
     }
 
     @Test
