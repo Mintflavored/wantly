@@ -74,14 +74,18 @@ fun WantlyNavHost() {
     val currentRoute = backStackEntry?.destination?.route
 
     // Deep-link: wantlyapp.ru/s/{token} → shared viewer.
-    // Обрабатываем стартовый intent один раз при запуске.
+    // Обрабатываем стартовый intent один раз, потом очищаем — иначе поворот/restore
+    // пересоздаст NavHost и LaunchedEffect(Unit) сработает снова, навигируя повторно.
     LaunchedEffect(Unit) {
-        val data = context.findActivity()?.intent?.data
+        val activity = context.findActivity() ?: return@LaunchedEffect
+        val data = activity.intent?.data
         if (data != null && data.path?.startsWith("/s/") == true) {
             val token = data.lastPathSegment
             if (!token.isNullOrBlank()) {
                 navController.navigate("${Routes.SHARED}/$token")
             }
+            // Consumed: очищаем, чтобы повторная обработка не навигировала снова.
+            activity.intent = null
         }
     }
 

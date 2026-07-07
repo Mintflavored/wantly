@@ -61,11 +61,17 @@ backend/deploy/*
 !backend/deploy/wantly-backend.service
 !backend/deploy/setup_env.sh.example
 !backend/deploy/wantlyapp.ru.nginx
+!backend/deploy/assetlinks.json.example
 backend/test_api.sh
 backend/test_api.py
 backend/test_preview.sh
 *.env
 .env
+
+# ─── Agent tooling (skills, commands) ───────────────────
+# Локальный workflow-тулинг (fix-pr-comments и т.п.) — не часть продукта.
+.agents/
+.zcode/
 
 # ─── OS ──────────────────────────────────────────────────
 .DS_Store

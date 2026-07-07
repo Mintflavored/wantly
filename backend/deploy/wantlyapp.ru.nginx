@@ -18,6 +18,16 @@ server {
         proxy_pass http://127.0.0.1:8080;
     }
 
+    # Android App Links verification: Android 12+ требует
+    # https://wantlyapp.ru/.well-known/assetlinks.json с SHA-256 fingerprint
+    # сертификата app. Без этого verified deep-link не работает и share-link
+    # открывается в браузере. Файл коммитится как example — реальный fingerprint
+    # нужно сгенерировать через keytool и подставить.
+    location /.well-known/assetlinks.json {
+        root /opt/wantly-backend/deploy;
+        default_type application/json;
+    }
+
     location / {
         return 200 'Wantly API';
         add_header Content-Type text/plain;
