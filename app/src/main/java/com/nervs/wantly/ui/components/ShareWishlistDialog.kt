@@ -25,6 +25,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +57,18 @@ fun ShareWishlistDialog(
     val context = LocalContext.current
     var isShared by remember { mutableStateOf(isCurrentlyShared) }
     var token by remember { mutableStateOf(currentToken) }
+
+    // Обновляем локальный token при изменении prop (асинхронный ответ toggleShare).
+    LaunchedEffect(currentToken) {
+        if (currentToken != null) token = currentToken
+    }
+    // Если sharing выключили (currentToken стал null после toggle off) — синхронизируем.
+    LaunchedEffect(isCurrentlyShared) {
+        if (!isCurrentlyShared) {
+            isShared = false
+            token = null
+        }
+    }
 
     val link = token?.let { "https://wantlyapp.ru/s/$it" }
 

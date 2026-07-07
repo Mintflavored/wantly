@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -36,16 +37,21 @@ class WishlistDetailViewModel(
 
     init {
         // Загружаем shareToken с сервера при открытии экрана (Room не хранит его).
+        // Используем serverId (не wishlistId — это local PK, не совпадает с backend id).
         viewModelScope.launch {
-            runCatching { api.getWishlistDetail(wishlistId) }
+            val entity = repository.observeWishlist(wishlistId).first { it != null } ?: return@launch
+            val serverId = entity.serverId ?: return@launch
+            runCatching { api.getWishlistDetail(serverId) }
                 .onSuccess { _shareToken.value = it.wishlist.shareToken }
         }
     }
 
-    /** Toggle isShared на сервере. Возвращает обновлённый shareToken (null если выключили). */
+    /** Toggle isShared на сервере. Использует serverId (backend id), не wishlistId. */
     fun toggleShare(onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { api.toggleShare(wishlistId) }
+            val entity = wishlist.first { it != null } ?: return@launch
+            val serverId = entity.serverId ?: return@launch
+            runCatching { api.toggleShare(serverId) }
                 .onSuccess { dto ->
                     _shareToken.value = dto.shareToken
                     onDone(dto.shareToken)

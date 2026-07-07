@@ -113,11 +113,12 @@ class WantlyApi(private val tokenProvider: () -> String?) {
         json.decodeFromString(serializer(), resp)
     }
 
-    /** PATCH без body (для toggle-endpoint'ов, которые не требуют тела). */
+    /** PATCH без meaningful body (для toggle-endpoint'ов). OkHttp требует body
+     *  для PATCH — отправляем пустой JSON {} (сервер игнорирует тело на toggle). */
     private suspend inline fun <reified Resp> patch(
         path: String,
     ): Resp = withContext(Dispatchers.IO) {
-        val resp = doRequest(path, "PATCH", null)
+        val resp = doRequest(path, "PATCH", "{}".toRequestBody(jsonMedia))
         json.decodeFromString(serializer(), resp)
     }
 
