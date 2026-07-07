@@ -60,6 +60,8 @@ fun WishlistDetailScreen(
     val wishlist by vm.wishlist.collectAsStateWithLifecycle()
     val wishes by vm.wishes.collectAsStateWithLifecycle()
     val shareToken by vm.shareToken.collectAsStateWithLifecycle()
+    val toggleErrorCount by vm.toggleErrorCount.collectAsStateWithLifecycle()
+    val isLoadingToken by vm.isLoadingToken.collectAsStateWithLifecycle()
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
     val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
@@ -216,6 +218,8 @@ fun WishlistDetailScreen(
         ShareWishlistDialog(
             isCurrentlyShared = currentWishlist.isShared || shareToken != null,
             currentToken = shareToken,
+            toggleErrorTick = toggleErrorCount,
+            isSwitchEnabled = !isLoadingToken,
             onDismiss = { showShareDialog = false },
             onToggleShare = { _ ->
                 vm.toggleShare()

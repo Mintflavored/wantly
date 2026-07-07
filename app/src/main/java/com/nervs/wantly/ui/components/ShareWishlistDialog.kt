@@ -51,23 +51,27 @@ import com.nervs.wantly.R
 fun ShareWishlistDialog(
     isCurrentlyShared: Boolean,
     currentToken: String?,
+    toggleErrorTick: Int = 0,
+    isSwitchEnabled: Boolean = true,
     onDismiss: () -> Unit,
     onToggleShare: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
+    // Локальное состояние НЕ меняем в onCheckedChange — ждём подтверждения сервера.
+    // При успехе prop isCurrentlyShared/currentToken обновятся → LaunchedEffect синхронизирует.
     var isShared by remember { mutableStateOf(isCurrentlyShared) }
     var token by remember { mutableStateOf(currentToken) }
+    var isToggling by remember { mutableStateOf(false) }
 
-    // Обновляем локальный token при изменении prop (асинхронный ответ toggleShare).
-    LaunchedEffect(currentToken) {
-        if (currentToken != null) token = currentToken
+    // Обновляем локальный token/isShared при изменении props (ответ сервера).
+    LaunchedEffect(currentToken, isCurrentlyShared) {
+        isShared = isCurrentlyShared
+        token = currentToken
+        isToggling = false
     }
-    // Если sharing выключили (currentToken стал null после toggle off) — синхронизируем.
-    LaunchedEffect(isCurrentlyShared) {
-        if (!isCurrentlyShared) {
-            isShared = false
-            token = null
-        }
+    // При ошибке toggle — разблокируем switch (state не изменился, остаётся прежним).
+    LaunchedEffect(toggleErrorTick) {
+        if (toggleErrorTick > 0) isToggling = false
     }
 
     val link = token?.let { "https://wantlyapp.ru/s/$it" }
@@ -85,9 +89,12 @@ fun ShareWishlistDialog(
                     Text(stringResource(R.string.dialog_share_switch_label))
                     Switch(
                         checked = isShared,
+                        enabled = !isToggling && isSwitchEnabled,
                         onCheckedChange = { newValue ->
-                            isShared = newValue
-                            if (!newValue) token = null
+                            // НЕ меняем isShared/token локально — сервер может отклонить.
+                            // При успехе props обновятся, LaunchedEffect синхронизирует.
+                            // При ошибке switch остаётся в прежнем положении.
+                            isToggling = true
                             onToggleShare(newValue)
                         },
                     )

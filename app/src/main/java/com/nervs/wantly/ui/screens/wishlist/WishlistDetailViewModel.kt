@@ -35,26 +35,46 @@ class WishlistDetailViewModel(
     private val _shareToken = MutableStateFlow<String?>(null)
     val shareToken: StateFlow<String?> = _shareToken.asStateFlow()
 
+    /** Счётчик ошибок toggle — dialog использует его для разблокировки switch при ошибке. */
+    private val _toggleErrorCount = MutableStateFlow(0)
+    val toggleErrorCount: StateFlow<Int> = _toggleErrorCount.asStateFlow()
+
+    /** true пока initial token-load не завершён. Dialog блокирует switch на это время,
+     *  чтобы не togg'нуть уже-shared список (isShared в Room может быть устаревшим). */
+    private val _isLoadingToken = MutableStateFlow(true)
+    val isLoadingToken: StateFlow<Boolean> = _isLoadingToken.asStateFlow()
+
     init {
         // Загружаем shareToken с сервера при открытии экрана (Room не хранит его).
         // Используем serverId (не wishlistId — это local PK, не совпадает с backend id).
         viewModelScope.launch {
-            val entity = repository.observeWishlist(wishlistId).first { it != null } ?: return@launch
-            val serverId = entity.serverId ?: return@launch
+            val entity = repository.observeWishlist(wishlistId).first { it != null } ?: run {
+                _isLoadingToken.value = false
+                return@launch
+            }
+            val serverId = entity.serverId ?: run {
+                _isLoadingToken.value = false
+                return@launch
+            }
             runCatching { api.getWishlistDetail(serverId) }
                 .onSuccess { _shareToken.value = it.wishlist.shareToken }
+            _isLoadingToken.value = false
         }
     }
 
-    /** Toggle isShared на сервере. Использует serverId (backend id), не wishlistId. */
-    fun toggleShare(onDone: (String?) -> Unit = {}) {
+    /** Toggle isShared на сервере. Использует serverId (backend id), не wishlistId.
+     *  При успехе — обновляет shareToken (dialog синхронизируется через LaunchedEffect).
+     *  При ошибке — повторно эмитит текущий token, чтобы dialog разблокировал switch. */
+    fun toggleShare() {
         viewModelScope.launch {
             val entity = wishlist.first { it != null } ?: return@launch
             val serverId = entity.serverId ?: return@launch
             runCatching { api.toggleShare(serverId) }
                 .onSuccess { dto ->
                     _shareToken.value = dto.shareToken
-                    onDone(dto.shareToken)
+                }
+                .onFailure {
+                    _toggleErrorCount.value++
                 }
         }
     }
