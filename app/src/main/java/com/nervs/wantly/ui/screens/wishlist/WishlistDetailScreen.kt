@@ -117,8 +117,13 @@ fun WishlistDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showShareDialog = true }) {
-                        Icon(Icons.Default.Share, contentDescription = cdShare)
+                    // Share доступен только для синхронизированных списков (есть serverId).
+                    // Local-only/guest списки нельзя share — toggleShare всё равно не дойдёт
+                    // до сервера. Скрываем кнопку вместо показа неработающего dialog.
+                    if (currentWishlist.serverId != null) {
+                        IconButton(onClick = { showShareDialog = true }) {
+                            Icon(Icons.Default.Share, contentDescription = cdShare)
+                        }
                     }
                     IconButton(onClick = { showEditList = true }) {
                         Icon(Icons.Default.Edit, contentDescription = cdEditWishlist)

@@ -21,10 +21,11 @@ server {
     # Android App Links verification: Android 12+ требует
     # https://wantlyapp.ru/.well-known/assetlinks.json с SHA-256 fingerprint
     # сертификата app. Без этого verified deep-link не работает и share-link
-    # открывается в браузере. Файл коммитится как example — реальный fingerprint
-    # нужно сгенерировать через keytool и подставить.
+    # открывается в браузере. alias указывает на конкретный файл (не root —
+    # иначе nginx искал бы .well-known/assetlinks.json внутри deploy/).
+    # Реальный файл (не .example) нужно создать при deploy через keytool.
     location /.well-known/assetlinks.json {
-        root /opt/wantly-backend/deploy;
+        alias /opt/wantly-backend/deploy/assetlinks.json;
         default_type application/json;
     }
 
