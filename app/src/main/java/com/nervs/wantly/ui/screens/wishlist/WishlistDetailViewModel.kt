@@ -49,6 +49,7 @@ class WishlistDetailViewModel(
         // Используем serverId (не wishlistId — это local PK, не совпадает с backend id).
         viewModelScope.launch {
             val entity = repository.observeWishlist(wishlistId).first { it != null } ?: run {
+                // Local-only список без serverId — sharing недоступен.
                 _isLoadingToken.value = false
                 return@launch
             }
@@ -57,18 +58,33 @@ class WishlistDetailViewModel(
                 return@launch
             }
             runCatching { api.getWishlistDetail(serverId) }
-                .onSuccess { _shareToken.value = it.wishlist.shareToken }
-            _isLoadingToken.value = false
+                .onSuccess {
+                    _shareToken.value = it.wishlist.shareToken
+                    _isLoadingToken.value = false
+                }
+                .onFailure {
+                    // Ошибка загрузки — НЕ разблокируем switch: мы не знаем текущий
+                    // share-state, toggle blind привёл бы к ревока активного share-link.
+                    // isLoadingToken остаётся true → switch disabled, user видит loading.
+                    // Retry доступен через re-fetch при следующем открытии экрана.
+                }
         }
     }
 
     /** Toggle isShared на сервере. Использует serverId (backend id), не wishlistId.
      *  При успехе — обновляет shareToken (dialog синхронизируется через LaunchedEffect).
-     *  При ошибке — повторно эмитит текущий token, чтобы dialog разблокировал switch. */
+     *  При ошибке/нет serverId — increment toggleErrorCount → dialog разблокирует switch. */
     fun toggleShare() {
         viewModelScope.launch {
-            val entity = wishlist.first { it != null } ?: return@launch
-            val serverId = entity.serverId ?: return@launch
+            val entity = wishlist.first { it != null } ?: run {
+                _toggleErrorCount.value++
+                return@launch
+            }
+            val serverId = entity.serverId ?: run {
+                // Local-only/guest список — sharing невозможен без serverId.
+                _toggleErrorCount.value++
+                return@launch
+            }
             runCatching { api.toggleShare(serverId) }
                 .onSuccess { dto ->
                     _shareToken.value = dto.shareToken
