@@ -44,6 +44,7 @@ fun WishCard(
     onDelete: () -> Unit,
     onEdit: () -> Unit = {},
     onSyncError: () -> Unit = {},
+    isReadOnly: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val status = WishStatus.fromName(wish.status)
@@ -102,22 +103,24 @@ fun WishCard(
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 StatusChip(status = status, onClick = onCycleStatus)
-                // syncError: сервер отверг row (HTTP 400). Иконка ведёт к Snackbar/Dialog
-                // с пояснением → пользователь редактирует → Repository сбрасывает флаг.
-                if (wish.syncError) {
-                    IconButton(onClick = onSyncError) {
-                        Icon(
-                            Icons.Default.CloudOff,
-                            contentDescription = stringResource(R.string.cd_sync_error),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
+                // В read-only режиме (shared viewer) — скрываем edit/delete/syncError.
+                // Status display остаётся (получатель видит статус, но не может менять).
+                if (!isReadOnly) {
+                    if (wish.syncError) {
+                        IconButton(onClick = onSyncError) {
+                            Icon(
+                                Icons.Default.CloudOff,
+                                contentDescription = stringResource(R.string.cd_sync_error),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
-                }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit))
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_delete))
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit))
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_delete))
+                    }
                 }
             }
         }

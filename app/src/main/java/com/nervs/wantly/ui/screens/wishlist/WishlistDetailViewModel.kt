@@ -6,9 +6,12 @@ import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.model.WishStatus
+import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.repository.WishlistRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -16,6 +19,7 @@ class WishlistDetailViewModel(
     private val wishlistId: Long,
     private val repository: WishlistRepository,
     private val syncManager: SyncManager,
+    private val api: WantlyApi,
 ) : ViewModel() {
     val wishlist: StateFlow<WishlistEntity?> =
         repository.observeWishlist(wishlistId)
@@ -24,6 +28,30 @@ class WishlistDetailViewModel(
     val wishes: StateFlow<List<WishEntity>> =
         repository.observeWishes(wishlistId)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Текущий share-token (transient — не хранится в Room). null если не shared
+     *  или если ещё не загружен с сервера. */
+    private val _shareToken = MutableStateFlow<String?>(null)
+    val shareToken: StateFlow<String?> = _shareToken.asStateFlow()
+
+    init {
+        // Загружаем shareToken с сервера при открытии экрана (Room не хранит его).
+        viewModelScope.launch {
+            runCatching { api.getWishlistDetail(wishlistId) }
+                .onSuccess { _shareToken.value = it.wishlist.shareToken }
+        }
+    }
+
+    /** Toggle isShared на сервере. Возвращает обновлённый shareToken (null если выключили). */
+    fun toggleShare(onDone: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { api.toggleShare(wishlistId) }
+                .onSuccess { dto ->
+                    _shareToken.value = dto.shareToken
+                    onDone(dto.shareToken)
+                }
+        }
+    }
 
     fun cycleStatus(wish: WishEntity) {
         viewModelScope.launch {

@@ -1,5 +1,8 @@
 package com.nervs.wantly.navigation
 
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.ComponentActivity
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Person
@@ -36,6 +39,7 @@ import com.nervs.wantly.ui.screens.addwish.AddWishScreen
 import com.nervs.wantly.ui.screens.auth.AuthScreen
 import com.nervs.wantly.ui.screens.home.HomeScreen
 import com.nervs.wantly.ui.screens.profile.ProfileScreen
+import com.nervs.wantly.ui.screens.shared.SharedWishlistScreen
 import com.nervs.wantly.ui.screens.wishlist.WishlistDetailScreen
 
 private object Routes {
@@ -45,9 +49,11 @@ private object Routes {
     const val EDIT_WISH = "editWish"
     const val AUTH = "auth"
     const val PROFILE = "profile"
+    const val SHARED = "shared"
     const val ARG_ID = "id"
     const val ARG_WISHLIST_ID = "wishlistId"
     const val ARG_WISH_ID = "wishId"
+    const val ARG_TOKEN = "token"
 }
 
 private data class TabItem(val route: String, val labelRes: Int, val icon: ImageVector)
@@ -66,6 +72,18 @@ fun WantlyNavHost() {
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    // Deep-link: wantlyapp.ru/s/{token} → shared viewer.
+    // Обрабатываем стартовый intent один раз при запуске.
+    LaunchedEffect(Unit) {
+        val data = context.findActivity()?.intent?.data
+        if (data != null && data.path?.startsWith("/s/") == true) {
+            val token = data.lastPathSegment
+            if (!token.isNullOrBlank()) {
+                navController.navigate("${Routes.SHARED}/$token")
+            }
+        }
+    }
 
     // Гостевой prompt: показываем когда гость добавил 3+ желания и ещё не показывали
     var showSignupPrompt by remember { mutableStateOf(false) }
@@ -163,6 +181,13 @@ fun WantlyNavHost() {
                     },
                 )
             }
+            composable(
+                route = "${Routes.SHARED}/{${Routes.ARG_TOKEN}}",
+                arguments = listOf(navArgument(Routes.ARG_TOKEN) { type = NavType.StringType }),
+            ) { entry ->
+                val token = entry.arguments?.getString(Routes.ARG_TOKEN) ?: return@composable
+                SharedWishlistScreen(token = token, onBack = { navController.popBackStack() })
+            }
         }
     }
 
@@ -197,4 +222,14 @@ fun WantlyNavHost() {
             },
         )
     }
+}
+
+/** Достаёт Activity из Context (для чтения intent.data deep-link). */
+private fun Context.findActivity(): ComponentActivity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is ComponentActivity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
