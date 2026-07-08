@@ -26,6 +26,9 @@ data class WishlistDto(
     val isShared: Boolean = false,
     val coverColor: Int = 0,
     val wishCount: Int = 0,
+    /** Присутствует только для isShared=true списков, возвращаемых владельцу.
+     *  В публичном GET /api/shared/{token} — null (получатель не видит токен). */
+    val shareToken: String? = null,
 )
 
 @Serializable
@@ -40,6 +43,11 @@ data class UpdateWishlistRequest(
     val title: String,
     val description: String? = null,
     val coverColor: Int = 0,
+)
+
+@Serializable
+data class SetShareRequest(
+    val enabled: Boolean,
 )
 
 @Serializable

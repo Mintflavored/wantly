@@ -81,6 +81,9 @@ class ApplicationTest {
         val title: String,
         val description: String? = null,
         val coverColor: Int = 0,
+        val isShared: Boolean = false,
+        val wishCount: Int = 0,
+        val shareToken: String? = null,
     )
 
     @kotlinx.serialization.Serializable
@@ -744,5 +747,136 @@ class ApplicationTest {
             setBody(mapOf("status" to "BOGUS"))
         }
         assertBadRequest(client, resp, "Статус некорректный")
+    }
+
+    // ── Sharing ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `toggle share on wishlist generates token and returns it`() = testApp { client ->
+        val auth = client.register("share-on@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Birthday"))
+        }.body()
+
+        val resp = client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val dto: WishlistDto = resp.body()
+        assertEquals(true, dto.isShared)
+        assertNotNull(dto.shareToken)
+        assertTrue(dto.shareToken!!.length == 22) // base64url 16 bytes
+    }
+
+    @Test
+    fun `toggle share off clears token`() = testApp { client ->
+        val auth = client.register("share-off@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        // Включаем
+        client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
+        }
+        // Выключаем
+        val resp = client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to false))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val dto: WishlistDto = resp.body()
+        assertEquals(false, dto.isShared)
+        assertEquals(null, dto.shareToken)
+    }
+
+    @Test
+    fun `toggle share on wishlist owned by another user returns 404`() = testApp { client ->
+        val alice = client.register("share-owner@example.com")
+        val bob = client.register("share-intruder@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${alice.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Alice's list"))
+        }.body()
+
+        val resp = client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${bob.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
+        }
+        assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
+
+    @Test
+    fun `get shared wishlist by token returns detail without auth`() = testApp { client ->
+        val auth = client.register("shared-host@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("Shared"))
+        }.body()
+        // Добавляем wish
+        client.post("/api/wishlists/${created.id}/wishes") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishRequest(title = "Gift"))
+        }
+        // Включаем share
+        val shared: WishlistDto = client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
+        }.body()
+        val token = shared.shareToken!!
+
+        // Публичный доступ — без Authorization header
+        val resp = client.get("/api/shared/$token")
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val detail: WishlistDetailResponse = resp.body()
+        assertEquals("Shared", detail.wishlist.title)
+        assertEquals(true, detail.wishlist.isShared)
+        assertEquals(null, detail.wishlist.shareToken) // не утекает в публичный ответ
+        assertEquals(1, detail.wishes.size)
+    }
+
+    @Test
+    fun `get shared wishlist with invalid token returns 404`() = testApp { client ->
+        val resp = client.get("/api/shared/nonexistent-token-12345")
+        assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
+
+    @Test
+    fun `get shared wishlist after share revoked returns 404`() = testApp { client ->
+        val auth = client.register("shared-revoke@example.com")
+        val created: WishlistDto = client.post("/api/wishlists") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(CreateWishlistRequest("List"))
+        }.body()
+        // Включаем
+        val shared: WishlistDto = client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
+        }.body()
+        val token = shared.shareToken!!
+        // Выключаем
+        client.patch("/api/wishlists/${created.id}/share") {
+            header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to false))
+        }
+        // Старая ссылка больше не работает
+        val resp = client.get("/api/shared/$token")
+        assertEquals(HttpStatusCode.NotFound, resp.status)
     }
 }

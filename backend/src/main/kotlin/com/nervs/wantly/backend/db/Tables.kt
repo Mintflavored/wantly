@@ -21,6 +21,7 @@ object Wishlists : Table("wishlists") {
     val description = text("description").nullable()
     val isShared = bool("is_shared").default(false)
     val coverColor = integer("cover_color").default(0)
+    val shareToken = varchar("share_token", 32).uniqueIndex().nullable()
     val createdAt = timestamp("created_at").clientDefault { Clock.System.now() }
     override val primaryKey = PrimaryKey(id)
 

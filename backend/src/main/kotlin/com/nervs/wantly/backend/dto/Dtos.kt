@@ -35,6 +35,9 @@ data class WishlistDto(
     val isShared: Boolean,
     val coverColor: Int,
     val wishCount: Int = 0,
+    /** Присутствует только если isShared=true. Владелец использует его для построения
+     *  share-link, получатель — для доступа через GET /api/shared/{token}. */
+    val shareToken: String? = null,
 )
 
 @Serializable
@@ -94,6 +97,11 @@ data class UpdateWishRequest(
     val currency: String = "RUB",
     val storeName: String? = null,
     val status: String? = null,
+)
+
+@Serializable
+data class SetShareRequest(
+    val enabled: Boolean,
 )
 
 // ── Link preview ──────────────────────────────────────

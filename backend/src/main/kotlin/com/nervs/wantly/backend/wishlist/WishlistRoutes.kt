@@ -5,6 +5,7 @@ import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
 import com.nervs.wantly.backend.db.Wishes
 import com.nervs.wantly.backend.db.Wishlists
 import com.nervs.wantly.backend.dto.*
+import com.nervs.wantly.backend.util.generateShareToken
 import com.nervs.wantly.backend.validation.validate
 import io.ktor.http.*
 import io.ktor.server.auth.*
@@ -30,6 +31,7 @@ fun Route.wishlistRoutes() {
                                 description = it[Wishlists.description],
                                 isShared = it[Wishlists.isShared],
                                 coverColor = it[Wishlists.coverColor],
+                                shareToken = it[Wishlists.shareToken],
                             )
                         }
                 }
@@ -82,6 +84,7 @@ fun Route.wishlistRoutes() {
                             isShared = list[Wishlists.isShared],
                             coverColor = list[Wishlists.coverColor],
                             wishCount = wishRows.size,
+                            shareToken = list[Wishlists.shareToken],
                         ),
                         wishes = wishRows.map { it.toWishDto() },
                     ),
@@ -119,6 +122,48 @@ fun Route.wishlistRoutes() {
                         description = row[Wishlists.description],
                         isShared = row[Wishlists.isShared],
                         coverColor = row[Wishlists.coverColor],
+                        shareToken = row[Wishlists.shareToken],
+                    ),
+                )
+            }
+
+            patch("/{id}/share") {
+                // Set isShared: владелец включает/выключает публичный доступ.
+                // Принимает desired state (enabled), не blind toggle — иначе stale
+                // dialog state мог ревокнуть активный share или включить выключенный.
+                // При включении — генерируем новый share_token (старый отзывается).
+                // При выключении — очищаем token, старые ссылки перестают работать.
+                val uid = call.userId()!!
+                val listId = call.parameters["id"]?.toLongOrNull()
+                    ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
+                val req = call.receive<SetShareRequest>()
+                val row = dbQuery {
+                    val existing = Wishlists.selectAll().where {
+                        (Wishlists.id eq listId) and (Wishlists.ownerId eq uid)
+                    }.singleOrNull() ?: return@dbQuery null
+                    // Idempotent: если уже в desired state — ничего не делаем с token.
+                    val newToken = if (req.enabled && !existing[Wishlists.isShared]) {
+                        generateShareToken()
+                    } else if (req.enabled) {
+                        existing[Wishlists.shareToken] // уже shared — сохраняем текущий token
+                    } else {
+                        null // выключаем — очищаем
+                    }
+                    Wishlists.update({ (Wishlists.id eq listId) and (Wishlists.ownerId eq uid) }) {
+                        it[Wishlists.isShared] = req.enabled
+                        it[Wishlists.shareToken] = newToken
+                    }
+                    Wishlists.selectAll().where { Wishlists.id eq listId }.single()
+                } ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorResponse("Список не найден"))
+                call.respond(
+                    HttpStatusCode.OK,
+                    WishlistDto(
+                        id = row[Wishlists.id],
+                        title = row[Wishlists.title],
+                        description = row[Wishlists.description],
+                        isShared = row[Wishlists.isShared],
+                        coverColor = row[Wishlists.coverColor],
+                        shareToken = row[Wishlists.shareToken],
                     ),
                 )
             }

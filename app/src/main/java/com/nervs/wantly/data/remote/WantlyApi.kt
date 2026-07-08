@@ -56,6 +56,15 @@ class WantlyApi(private val tokenProvider: () -> String?) {
     suspend fun getWishlistDetail(id: Long): WishlistDetailResponse =
         get("api/wishlists/$id")
 
+    /** Set isShared на сервере (не blind toggle — передаёт desired state).
+     *  Возвращает обновлённый WishlistDto с shareToken. */
+    suspend fun setShare(id: Long, enabled: Boolean): WishlistDto =
+        patch("api/wishlists/$id/share", SetShareRequest(enabled))
+
+    /** Публичный доступ к shared wishlist — без JWT (работает в guest mode). */
+    suspend fun getSharedWishlist(token: String): WishlistDetailResponse =
+        get("api/shared/$token")
+
     // ── Wishes ────────────────────────────────────────────
 
     suspend fun createWish(wishlistId: Long, req: CreateWishRequest): WishDto =
@@ -102,6 +111,15 @@ class WantlyApi(private val tokenProvider: () -> String?) {
         path: String,
     ): Resp = withContext(Dispatchers.IO) {
         val resp = doRequest(path, "POST", null)
+        json.decodeFromString(serializer(), resp)
+    }
+
+    /** PATCH без meaningful body (для toggle-endpoint'ов). OkHttp требует body
+     *  для PATCH — отправляем пустой JSON {} (сервер игнорирует тело на toggle). */
+    private suspend inline fun <reified Resp> patch(
+        path: String,
+    ): Resp = withContext(Dispatchers.IO) {
+        val resp = doRequest(path, "PATCH", "{}".toRequestBody(jsonMedia))
         json.decodeFromString(serializer(), resp)
     }
 

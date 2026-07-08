@@ -102,4 +102,17 @@
     <!-- Нижняя навигация -->
     <string name="nav_lists">Списки</string>
     <string name="nav_profile">Профиль</string>
+
+    <!-- Sharing -->
+    <string name="cd_share">Поделиться списком</string>
+    <string name="dialog_share_title">Поделиться списком</string>
+    <string name="dialog_share_switch_label">Публичная ссылка</string>
+    <string name="dialog_share_link_label">Ссылка</string>
+    <string name="action_copy_link">Скопировать</string>
+    <string name="action_share_via">Поделиться</string>
+    <string name="link_copied">Ссылка скопирована</string>
+    <string name="shared_list_hint">Это чужой список желаний. Изменения может вносить только владелец.</string>
+    <string name="shared_not_found">Список не найден. Возможно, ссылка устарела или список перестали делиться.</string>
+    <string name="shared_load_error">Не удалось загрузить список. Проверьте подключение к интернету.</string>
+    <string name="action_retry">Повторить</string>
 </resources>

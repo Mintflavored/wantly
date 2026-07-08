@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -40,6 +41,7 @@ import com.nervs.wantly.R
 import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.ui.common.openUrl
+import com.nervs.wantly.ui.components.ShareWishlistDialog
 import com.nervs.wantly.ui.components.WishCard
 import com.nervs.wantly.ui.components.WishlistFormDialog
 import com.nervs.wantly.ui.rememberAppViewModel
@@ -54,18 +56,23 @@ fun WishlistDetailScreen(
 ) {
     val context = LocalContext.current
     val vm: WishlistDetailViewModel =
-        rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository, it.syncManager) }
+        rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository, it.syncManager, it.api) }
     val wishlist by vm.wishlist.collectAsStateWithLifecycle()
     val wishes by vm.wishes.collectAsStateWithLifecycle()
+    val shareToken by vm.shareToken.collectAsStateWithLifecycle()
+    val toggleErrorCount by vm.toggleErrorCount.collectAsStateWithLifecycle()
+    val isLoadingToken by vm.isLoadingToken.collectAsStateWithLifecycle()
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
     val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
+    val cdShare = stringResource(R.string.cd_share)
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     val syncErrorMessage = stringResource(R.string.sync_error_message)
     val syncErrorEdit = stringResource(R.string.sync_error_action_edit)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var wishToDelete by remember { mutableStateOf<WishEntity?>(null) }
     var showEditList by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
 
     val currentWishlist = wishlist
     if (currentWishlist == null) {
@@ -110,6 +117,14 @@ fun WishlistDetailScreen(
                     }
                 },
                 actions = {
+                    // Share доступен только для синхронизированных списков (есть serverId).
+                    // Local-only/guest списки нельзя share — toggleShare всё равно не дойдёт
+                    // до сервера. Скрываем кнопку вместо показа неработающего dialog.
+                    if (currentWishlist.serverId != null) {
+                        IconButton(onClick = { showShareDialog = true }) {
+                            Icon(Icons.Default.Share, contentDescription = cdShare)
+                        }
+                    }
                     IconButton(onClick = { showEditList = true }) {
                         Icon(Icons.Default.Edit, contentDescription = cdEditWishlist)
                     }
@@ -200,6 +215,20 @@ fun WishlistDetailScreen(
             initialTitle = currentWishlist.title,
             initialDescription = currentWishlist.description.orEmpty(),
             initialColor = currentWishlist.coverColor,
+        )
+    }
+
+    // Диалог управления публичным доступом.
+    if (showShareDialog) {
+        ShareWishlistDialog(
+            isCurrentlyShared = currentWishlist.isShared || shareToken != null,
+            currentToken = shareToken,
+            toggleErrorTick = toggleErrorCount,
+            isSwitchEnabled = !isLoadingToken,
+            onDismiss = { showShareDialog = false },
+            onToggleShare = { enabled ->
+                vm.setShare(enabled)
+            },
         )
     }
 }
