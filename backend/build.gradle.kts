@@ -36,6 +36,7 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages")
     implementation("io.ktor:ktor-server-call-logging")
     implementation("io.ktor:ktor-server-cors")
+    implementation("io.ktor:ktor-server-rate-limit")
 
     // Database (Exposed 0.61 — стабильный API с org.jetbrains.exposed.sql)
     implementation("org.jetbrains.exposed:exposed-core:0.61.0")

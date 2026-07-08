@@ -4,25 +4,38 @@ import com.nervs.wantly.backend.auth.JwtConfig
 import com.nervs.wantly.backend.auth.UserPrincipal
 import com.nervs.wantly.backend.auth.authRoutes
 import com.nervs.wantly.backend.db.DatabaseFactory
+import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
+import com.nervs.wantly.backend.db.Users
 import com.nervs.wantly.backend.dto.ErrorResponse
 import com.nervs.wantly.backend.preview.previewRoutes
+import com.nervs.wantly.backend.util.getClientIp
 import com.nervs.wantly.backend.wishlist.sharedWishlistRoutes
 import com.nervs.wantly.backend.wishlist.wishRoutes
 import com.nervs.wantly.backend.wishlist.wishlistRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
+import io.ktor.server.application.call
+import io.ktor.server.application.log
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
+import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.ratelimit.RateLimit
+import io.ktor.server.plugins.ratelimit.RateLimitName
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.sql.selectAll
 import org.slf4j.LoggerFactory
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = LoggerFactory.getLogger("Application")
+
+/** Имя rate-limit провайдера для auth endpoints (login/register): 5 попыток/min. */
+val AUTHORIZATION_RATE_LIMIT = RateLimitName("authorization")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
@@ -121,8 +134,36 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
         }
     }
 
+    // Логирование каждого запроса: method, path, status, duration.
+    // dep ktor-server-call-logging уже в classpath.
+    install(CallLogging)
+
+    // Rate limiting: глобальный (60 req/min/IP) + auth-жёсткий (5 req/min/IP).
+    // requestKey = X-Real-IP (nginx ставит) с fallback на remoteHost (тесты).
+    install(RateLimit) {
+        register {
+            rateLimiter(60, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
+        register(AUTHORIZATION_RATE_LIMIT) {
+            rateLimiter(5, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
+    }
+
     routing {
         get("/health") { call.respondText("OK") }
+        // Readiness probe: проверяет DB (SELECT COUNT). nginx/LB использует
+        // для rotation — если Postgres упал, сервер убирается из пула.
+        get("/health/ready") {
+            try {
+                dbQuery { Users.selectAll().count() }
+                call.respondText("OK")
+            } catch (e: Exception) {
+                logger.warn("Readiness check failed", e)
+                call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("База данных недоступна"))
+            }
+        }
         authRoutes()
         wishlistRoutes()
         wishRoutes()
