@@ -71,10 +71,11 @@ class WishlistDetailViewModel(
         }
     }
 
-    /** Toggle isShared на сервере. Использует serverId (backend id), не wishlistId.
+    /** Set isShared на сервере (не blind toggle — передаёт desired state).
+     *  Использует serverId (backend id), не wishlistId.
      *  При успехе — обновляет shareToken (dialog синхронизируется через LaunchedEffect).
      *  При ошибке/нет serverId — increment toggleErrorCount → dialog разблокирует switch. */
-    fun toggleShare() {
+    fun setShare(enabled: Boolean) {
         viewModelScope.launch {
             val entity = wishlist.first { it != null } ?: run {
                 _toggleErrorCount.value++
@@ -85,7 +86,7 @@ class WishlistDetailViewModel(
                 _toggleErrorCount.value++
                 return@launch
             }
-            runCatching { api.toggleShare(serverId) }
+            runCatching { api.setShare(serverId, enabled) }
                 .onSuccess { dto ->
                     _shareToken.value = dto.shareToken
                 }

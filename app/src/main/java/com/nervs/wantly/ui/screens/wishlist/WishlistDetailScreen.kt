@@ -226,8 +226,8 @@ fun WishlistDetailScreen(
             toggleErrorTick = toggleErrorCount,
             isSwitchEnabled = !isLoadingToken,
             onDismiss = { showShareDialog = false },
-            onToggleShare = { _ ->
-                vm.toggleShare()
+            onToggleShare = { enabled ->
+                vm.setShare(enabled)
             },
         )
     }

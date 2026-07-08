@@ -46,6 +46,11 @@ data class UpdateWishlistRequest(
 )
 
 @Serializable
+data class SetShareRequest(
+    val enabled: Boolean,
+)
+
+@Serializable
 data class WishDto(
     val id: Long,
     val wishlistId: Long,

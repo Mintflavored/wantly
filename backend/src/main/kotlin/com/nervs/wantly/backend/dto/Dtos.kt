@@ -99,6 +99,11 @@ data class UpdateWishRequest(
     val status: String? = null,
 )
 
+@Serializable
+data class SetShareRequest(
+    val enabled: Boolean,
+)
+
 // ── Link preview ──────────────────────────────────────
 
 @Serializable

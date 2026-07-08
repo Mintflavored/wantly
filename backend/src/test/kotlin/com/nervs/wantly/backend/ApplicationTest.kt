@@ -762,6 +762,8 @@ class ApplicationTest {
 
         val resp = client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
         }
         assertEquals(HttpStatusCode.OK, resp.status)
         val dto: WishlistDto = resp.body()
@@ -781,10 +783,14 @@ class ApplicationTest {
         // Включаем
         client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
         }
         // Выключаем
         val resp = client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to false))
         }
         assertEquals(HttpStatusCode.OK, resp.status)
         val dto: WishlistDto = resp.body()
@@ -804,6 +810,8 @@ class ApplicationTest {
 
         val resp = client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${bob.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
@@ -825,6 +833,8 @@ class ApplicationTest {
         // Включаем share
         val shared: WishlistDto = client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
         }.body()
         val token = shared.shareToken!!
 
@@ -855,11 +865,15 @@ class ApplicationTest {
         // Включаем
         val shared: WishlistDto = client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to true))
         }.body()
         val token = shared.shareToken!!
         // Выключаем
         client.patch("/api/wishlists/${created.id}/share") {
             header(HttpHeaders.Authorization, "Bearer ${auth.token}")
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("enabled" to false))
         }
         // Старая ссылка больше не работает
         val resp = client.get("/api/shared/$token")

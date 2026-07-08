@@ -128,21 +128,29 @@ fun Route.wishlistRoutes() {
             }
 
             patch("/{id}/share") {
-                // Toggle isShared: владелец включает/выключает публичный доступ.
-                // При включении — генерируем share_token (старый отзывается при
-                // повторном включении новым токеном). При выключении — очищаем token,
-                // старые ссылки перестают работать (revocation).
+                // Set isShared: владелец включает/выключает публичный доступ.
+                // Принимает desired state (enabled), не blind toggle — иначе stale
+                // dialog state мог ревокнуть активный share или включить выключенный.
+                // При включении — генерируем новый share_token (старый отзывается).
+                // При выключении — очищаем token, старые ссылки перестают работать.
                 val uid = call.userId()!!
                 val listId = call.parameters["id"]?.toLongOrNull()
                     ?: return@patch call.respond(HttpStatusCode.BadRequest, ErrorResponse("Неверный ID"))
+                val req = call.receive<SetShareRequest>()
                 val row = dbQuery {
                     val existing = Wishlists.selectAll().where {
                         (Wishlists.id eq listId) and (Wishlists.ownerId eq uid)
                     }.singleOrNull() ?: return@dbQuery null
-                    val newToken = if (!existing[Wishlists.isShared]) generateShareToken() else null
-                    val newShared = !existing[Wishlists.isShared]
+                    // Idempotent: если уже в desired state — ничего не делаем с token.
+                    val newToken = if (req.enabled && !existing[Wishlists.isShared]) {
+                        generateShareToken()
+                    } else if (req.enabled) {
+                        existing[Wishlists.shareToken] // уже shared — сохраняем текущий token
+                    } else {
+                        null // выключаем — очищаем
+                    }
                     Wishlists.update({ (Wishlists.id eq listId) and (Wishlists.ownerId eq uid) }) {
-                        it[Wishlists.isShared] = newShared
+                        it[Wishlists.isShared] = req.enabled
                         it[Wishlists.shareToken] = newToken
                     }
                     Wishlists.selectAll().where { Wishlists.id eq listId }.single()

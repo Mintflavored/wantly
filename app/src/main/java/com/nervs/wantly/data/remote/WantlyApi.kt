@@ -56,9 +56,10 @@ class WantlyApi(private val tokenProvider: () -> String?) {
     suspend fun getWishlistDetail(id: Long): WishlistDetailResponse =
         get("api/wishlists/$id")
 
-    /** Toggle isShared на сервере. Возвращает обновлённый WishlistDto с shareToken. */
-    suspend fun toggleShare(id: Long): WishlistDto =
-        patch("api/wishlists/$id/share")
+    /** Set isShared на сервере (не blind toggle — передаёт desired state).
+     *  Возвращает обновлённый WishlistDto с shareToken. */
+    suspend fun setShare(id: Long, enabled: Boolean): WishlistDto =
+        patch("api/wishlists/$id/share", SetShareRequest(enabled))
 
     /** Публичный доступ к shared wishlist — без JWT (работает в guest mode). */
     suspend fun getSharedWishlist(token: String): WishlistDetailResponse =
