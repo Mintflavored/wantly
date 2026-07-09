@@ -141,7 +141,9 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
     // Rate limiting: глобальный (60 req/min/IP) + auth-жёсткий (5 req/min/IP).
     // requestKey = X-Real-IP (nginx ставит) с fallback на remoteHost (тесты).
     install(RateLimit) {
-        register {
+        // global {} — применяется ко ВСЕМ запросам автоматически (в отличие от
+        // register {} который только определяет провайдер для явного rateLimit()).
+        global {
             rateLimiter(60, 60.seconds)
             requestKey { call -> call.getClientIp() }
         }
