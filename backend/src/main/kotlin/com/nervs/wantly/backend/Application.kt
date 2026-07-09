@@ -157,9 +157,10 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
         // не зависит от размера таблицы). nginx/LB использует для rotation.
         get("/health/ready") {
             try {
-                // Пустая транзакция = DB ping. Если пул/Postgres мертвы — exception.
-                // Не используем COUNT(*) — он растёт с размером таблицы.
-                dbQuery { /* open+close transaction = connection check */ }
+                // SELECT 1 — реальный DB ping. Exposed лениво инициализирует
+                // connection — пустая транзакция может НЕ проверить коннект.
+                // SELECT 1 гарантирует checkout + round-trip.
+                dbQuery { org.jetbrains.exposed.sql.transactions.TransactionManager.current().exec("SELECT 1") }
                 call.respondText("OK")
             } catch (e: Exception) {
                 logger.warn("Readiness check failed", e)
