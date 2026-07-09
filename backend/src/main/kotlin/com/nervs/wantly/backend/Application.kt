@@ -5,7 +5,6 @@ import com.nervs.wantly.backend.auth.UserPrincipal
 import com.nervs.wantly.backend.auth.authRoutes
 import com.nervs.wantly.backend.db.DatabaseFactory
 import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
-import com.nervs.wantly.backend.db.Users
 import com.nervs.wantly.backend.dto.ErrorResponse
 import com.nervs.wantly.backend.preview.previewRoutes
 import com.nervs.wantly.backend.util.getClientIp
@@ -28,7 +27,6 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
-import org.jetbrains.exposed.sql.selectAll
 import org.slf4j.LoggerFactory
 import kotlin.time.Duration.Companion.seconds
 
@@ -155,11 +153,13 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
 
     routing {
         get("/health") { call.respondText("OK") }
-        // Readiness probe: проверяет DB (SELECT COUNT). nginx/LB использует
-        // для rotation — если Postgres упал, сервер убирается из пула.
+        // Readiness probe: проверяет DB коннект (SELECT 1 — constant-time,
+        // не зависит от размера таблицы). nginx/LB использует для rotation.
         get("/health/ready") {
             try {
-                dbQuery { Users.selectAll().count() }
+                // Пустая транзакция = DB ping. Если пул/Postgres мертвы — exception.
+                // Не используем COUNT(*) — он растёт с размером таблицы.
+                dbQuery { /* open+close transaction = connection check */ }
                 call.respondText("OK")
             } catch (e: Exception) {
                 logger.warn("Readiness check failed", e)
