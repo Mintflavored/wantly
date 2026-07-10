@@ -35,6 +35,9 @@ private val logger = LoggerFactory.getLogger("Application")
 /** Имя rate-limit провайдера для auth endpoints (login/register): 5 попыток/min. */
 val AUTHORIZATION_RATE_LIMIT = RateLimitName("authorization")
 
+/** Имя rate-limit провайдера для preview endpoint: 5/min (Chromium = ~200MB RAM + single worker). */
+val PREVIEW_RATE_LIMIT = RateLimitName("preview")
+
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
 /**
@@ -141,13 +144,18 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
     install(RateLimit) {
         // global {} — применяется ко ВСЕМ запросам автоматически (в отличие от
         // register {} который только определяет провайдер для явного rateLimit()).
-        // 200/min: достаточно для sync (pullInternal делает 1+N запросов для N списков),
-        // но ограничивает abuse. /api/preview отдельно ограничен single-worker dispatcher.
+        // 500/min: достаточно для sync (pullInternal делает 1+N запросов для N списков,
+        // power user с 400+ wishlists не упрётся). Abuse backpressure работает.
         global {
-            rateLimiter(200, 60.seconds)
+            rateLimiter(500, 60.seconds)
             requestKey { call -> call.getClientIp() }
         }
         register(AUTHORIZATION_RATE_LIMIT) {
+            rateLimiter(5, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
+        // Preview = Chromium ~200MB RAM + single-worker. 5/min — жёсткий лимит.
+        register(PREVIEW_RATE_LIMIT) {
             rateLimiter(5, 60.seconds)
             requestKey { call -> call.getClientIp() }
         }
