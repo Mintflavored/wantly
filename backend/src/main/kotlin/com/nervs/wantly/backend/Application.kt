@@ -141,8 +141,10 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
     install(RateLimit) {
         // global {} — применяется ко ВСЕМ запросам автоматически (в отличие от
         // register {} который только определяет провайдер для явного rateLimit()).
+        // 200/min: достаточно для sync (pullInternal делает 1+N запросов для N списков),
+        // но ограничивает abuse. /api/preview отдельно ограничен single-worker dispatcher.
         global {
-            rateLimiter(60, 60.seconds)
+            rateLimiter(200, 60.seconds)
             requestKey { call -> call.getClientIp() }
         }
         register(AUTHORIZATION_RATE_LIMIT) {
