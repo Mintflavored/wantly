@@ -137,7 +137,15 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
 
     // Логирование каждого запроса: method, path, status, duration.
     // dep ktor-server-call-logging уже в classpath.
-    install(CallLogging)
+    // Пропускаем /api/shared/{token} — token не должен попадать в логи,
+    // иначе любой с доступом к логам читает чужие shared-списки.
+    install(CallLogging) {
+        // Пропускаем /api/shared/{token} — token не должен попадать в логи.
+        filter { call ->
+            val uri = call.request.local.uri
+            !uri.startsWith("/api/shared/")
+        }
+    }
 
     // Rate limiting: глобальный (60 req/min/IP) + auth-жёсткий (5 req/min/IP).
     // requestKey = X-Real-IP (nginx ставит) с fallback на remoteHost (тесты).
