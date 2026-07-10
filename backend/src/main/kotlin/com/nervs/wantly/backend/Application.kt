@@ -133,6 +133,15 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
                 ErrorResponse("Внутренняя ошибка сервера"),
             )
         }
+        // 429 — RateLimit plugin отверг запрос. Без этого handler'а Ktor
+        // возвращает пустой body, Android client показывает generic "Ошибка сервера".
+        // ErrorResponse сохраняет JSON-формат + Retry-After header от plugin'а.
+        status(HttpStatusCode.TooManyRequests) { call, _ ->
+            call.respond(
+                HttpStatusCode.TooManyRequests,
+                ErrorResponse("Слишком много запросов. Попробуйте позже."),
+            )
+        }
     }
 
     // Логирование каждого запроса: method, path, status, duration.
