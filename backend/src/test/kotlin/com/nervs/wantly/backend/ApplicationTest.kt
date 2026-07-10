@@ -879,4 +879,35 @@ class ApplicationTest {
         val resp = client.get("/api/shared/$token")
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
+
+    // ── Rate limiting ───────────────────────────────────────────────────
+
+    @Test
+    fun `login rate limit returns 429 after 5 auth attempts`() = testApp { client ->
+        // register считается первым auth-запросом (он внутри rateLimit блока).
+        client.register("ratelimit@example.com")
+        // Ещё 4 неудачных login — итого 5 auth-запросов (все в норме).
+        repeat(4) {
+            val resp = client.post("/api/auth/login") {
+                contentType(ContentType.Application.Json)
+                setBody(mapOf("email" to "ratelimit@example.com", "password" to "WRONG"))
+            }
+            assertEquals(HttpStatusCode.Unauthorized, resp.status)
+        }
+        // 6-й auth-запрос — 429 (rate limit превышен: лимит 5/min).
+        val overLimit = client.post("/api/auth/login") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("email" to "ratelimit@example.com", "password" to "WRONG"))
+        }
+        assertEquals(HttpStatusCode.TooManyRequests, overLimit.status)
+    }
+
+    // ── Health readiness ────────────────────────────────────────────────
+
+    @Test
+    fun `health ready returns 200 when DB available`() = testApp { client ->
+        val resp = client.get("/health/ready")
+        assertEquals(HttpStatusCode.OK, resp.status)
+        assertEquals("OK", resp.bodyAsText())
+    }
 }

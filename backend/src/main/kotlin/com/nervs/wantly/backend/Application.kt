@@ -4,25 +4,39 @@ import com.nervs.wantly.backend.auth.JwtConfig
 import com.nervs.wantly.backend.auth.UserPrincipal
 import com.nervs.wantly.backend.auth.authRoutes
 import com.nervs.wantly.backend.db.DatabaseFactory
+import com.nervs.wantly.backend.db.DatabaseFactory.dbQuery
 import com.nervs.wantly.backend.dto.ErrorResponse
 import com.nervs.wantly.backend.preview.previewRoutes
+import com.nervs.wantly.backend.util.getClientIp
 import com.nervs.wantly.backend.wishlist.sharedWishlistRoutes
 import com.nervs.wantly.backend.wishlist.wishRoutes
 import com.nervs.wantly.backend.wishlist.wishlistRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
+import io.ktor.server.application.call
+import io.ktor.server.application.log
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
+import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.ratelimit.RateLimit
+import io.ktor.server.plugins.ratelimit.RateLimitName
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = LoggerFactory.getLogger("Application")
+
+/** Имя rate-limit провайдера для auth endpoints (login/register): 5 попыток/min. */
+val AUTHORIZATION_RATE_LIMIT = RateLimitName("authorization")
+
+/** Имя rate-limit провайдера для preview endpoint: 5/min (Chromium = ~200MB RAM + single worker). */
+val PREVIEW_RATE_LIMIT = RateLimitName("preview")
 
 fun main(args: Array<String>) = io.ktor.server.netty.EngineMain.main(args)
 
@@ -119,10 +133,67 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
                 ErrorResponse("Внутренняя ошибка сервера"),
             )
         }
+        // 429 — RateLimit plugin отверг запрос. Без этого handler'а Ktor
+        // возвращает пустой body, Android client показывает generic "Ошибка сервера".
+        // ErrorResponse сохраняет JSON-формат + Retry-After header от plugin'а.
+        status(HttpStatusCode.TooManyRequests) { call, _ ->
+            call.respond(
+                HttpStatusCode.TooManyRequests,
+                ErrorResponse("Слишком много запросов. Попробуйте позже."),
+            )
+        }
+    }
+
+    // Логирование каждого запроса: method, path, status, duration.
+    // dep ktor-server-call-logging уже в classpath.
+    // Пропускаем /api/shared/{token} — token не должен попадать в логи,
+    // иначе любой с доступом к логам читает чужие shared-списки.
+    install(CallLogging) {
+        // Пропускаем /api/shared/{token} — token не должен попадать в логи.
+        filter { call ->
+            val uri = call.request.local.uri
+            !uri.startsWith("/api/shared/")
+        }
+    }
+
+    // Rate limiting: глобальный (60 req/min/IP) + auth-жёсткий (5 req/min/IP).
+    // requestKey = X-Real-IP (nginx ставит) с fallback на remoteHost (тесты).
+    install(RateLimit) {
+        // global {} — применяется ко ВСЕМ запросам автоматически (в отличие от
+        // register {} который только определяет провайдер для явного rateLimit()).
+        // 500/min: достаточно для sync (pullInternal делает 1+N запросов для N списков,
+        // power user с 400+ wishlists не упрётся). Abuse backpressure работает.
+        global {
+            rateLimiter(500, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
+        register(AUTHORIZATION_RATE_LIMIT) {
+            rateLimiter(5, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
+        // Preview = Chromium ~200MB RAM + single-worker. 5/min — жёсткий лимит.
+        register(PREVIEW_RATE_LIMIT) {
+            rateLimiter(5, 60.seconds)
+            requestKey { call -> call.getClientIp() }
+        }
     }
 
     routing {
         get("/health") { call.respondText("OK") }
+        // Readiness probe: проверяет DB коннект (SELECT 1 — constant-time,
+        // не зависит от размера таблицы). nginx/LB использует для rotation.
+        get("/health/ready") {
+            try {
+                // SELECT 1 — реальный DB ping. Exposed лениво инициализирует
+                // connection — пустая транзакция может НЕ проверить коннект.
+                // SELECT 1 гарантирует checkout + round-trip.
+                dbQuery { org.jetbrains.exposed.sql.transactions.TransactionManager.current().exec("SELECT 1") }
+                call.respondText("OK")
+            } catch (e: Exception) {
+                logger.warn("Readiness check failed", e)
+                call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("База данных недоступна"))
+            }
+        }
         authRoutes()
         wishlistRoutes()
         wishRoutes()
