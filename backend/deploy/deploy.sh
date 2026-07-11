@@ -26,8 +26,7 @@ echo "=== Restart backend ==="
 ssh "$HOST" "systemctl restart wantly-backend && sleep 5"
 
 echo "=== Health check ==="
-ssh "$HOST" "curl -sf http://127.0.0.1:8080/health && echo '' && curl -sf http://127.0.0.1:8080/health/ready && echo ''"
-if [ $? -eq 0 ]; then
+if ssh "$HOST" "curl -sf http://127.0.0.1:8080/health && echo '' && curl -sf http://127.0.0.1:8080/health/ready && echo ''"; then
     echo "✅ Deploy successful"
 else
     echo "❌ Health check failed — check journalctl -u wantly-backend"
