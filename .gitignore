@@ -62,6 +62,8 @@ backend/deploy/*
 !backend/deploy/setup_env.sh.example
 !backend/deploy/wantlyapp.ru.nginx
 !backend/deploy/assetlinks.json.example
+!backend/deploy/deploy.sh
+!backend/deploy/README.md
 backend/test_api.sh
 backend/test_api.py
 backend/test_preview.sh
