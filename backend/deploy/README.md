@@ -38,16 +38,16 @@ chown wantly:wantly /etc/wantly/backend.env
 chmod 0600 /etc/wantly/backend.env
 ```
 
-### 5. Установить Playwright (Chromium для preview)
+### 5. Установить системные зависимости Playwright
+
+Java Playwright скачает Chromium автоматически при первом preview-запросе,
+но нужные системные библиотеки должны быть установлены заранее:
 
 ```bash
-sudo -u wantly PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers \
-  npx playwright install chromium --with-deps
+apt install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+  libcups2 libgbm1 libasound2t64 libxkbcommon0 libxcomposite1 \
+  libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
 ```
-
-Или при первом запуске backend'а Java Playwright скачает Chromium автоматически
-(нужны системные зависимости: `apt install -y libnss3 libatk1.0-0 libatk-bridge2.0-0
-libcups2 libgbm1 libasound2t64`).
 
 ### 6. Создать assetlinks.json
 
