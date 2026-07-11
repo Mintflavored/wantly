@@ -137,7 +137,7 @@ fun Route.wishRoutes() {
                 }
                 if (!owns) return@patch call.respond(HttpStatusCode.NotFound, ErrorResponse("Желание не найдено"))
                 dbQuery { Wishes.update({ Wishes.id eq wishId }) { it[Wishes.status] = req.status } }
-                call.respond(HttpStatusCode.OK, mapOf("status" to req.status))
+                call.respond(HttpStatusCode.OK, WishStatusResponse(req.status))
             }
 
             delete {

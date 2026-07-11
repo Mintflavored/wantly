@@ -85,6 +85,9 @@ internal fun Application.moduleWithDb(configureDb: Boolean) {
     }
 
     install(CORS) {
+        // App — нативное Android приложение, CORS не нужен (нет browser origin).
+        // anyHost() spec-OK без credentials (auth через Bearer header, не cookies).
+        // Если в будущем будет web-frontend, заменить на host("wantlyapp.ru").
         anyHost()
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Authorization)
