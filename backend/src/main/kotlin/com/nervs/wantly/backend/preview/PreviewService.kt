@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = LoggerFactory.getLogger("PreviewService")
 
@@ -21,6 +22,18 @@ private val logger = LoggerFactory.getLogger("PreviewService")
  * event-loop thread.
  */
 private val playwrightDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+// ── In-memory TTL кэш для preview результатов ──────────────────────────
+// Без Caffeine/Guava — ConcurrentHashMap + timestamp. TTL 1 час.
+// Кэшируем только success=true (ошибки парсинга — временные, не кэшируем).
+// Size-guard: при превышении MAX_SIZE — clear() (проще чем LRU для ~1MB).
+
+private data class CacheEntry(val response: PreviewResponse, val expiresAt: Long)
+
+private const val CACHE_TTL_MS = 60 * 60 * 1000L // 1 час
+private const val CACHE_MAX_SIZE = 2000
+
+private val previewCache = ConcurrentHashMap<String, CacheEntry>()
 
 /**
  * Серверный парсинг ссылок через Playwright + Chromium.
@@ -66,9 +79,30 @@ object PreviewService {
      * [playwrightDispatcher] (single-worker), чтобы не занимать Netty
      * event-loop thread и при этом держать Playwright API single-threaded
      * (он не thread-safe — см. комментарий у dispatcher declaration).
+     *
+     * Сначала проверяет in-memory TTL кэш — cache hit обходит Chromium
+     * полностью (мгновенный ответ для повторных ссылок).
      */
-    suspend fun fetch(rawUrl: String): PreviewResponse = withContext(playwrightDispatcher) {
-        fetchBlocking(rawUrl)
+    suspend fun fetch(rawUrl: String): PreviewResponse {
+        // Cache lookup — до playwrightDispatcher, чтобы hit не занимал worker.
+        val normalized = normalizeUrl(rawUrl)
+        if (normalized != null) {
+            val cached = previewCache[normalized]
+            if (cached != null && cached.expiresAt > System.currentTimeMillis()) {
+                logger.debug("Cache hit: $normalized")
+                return cached.response
+            }
+        }
+        // Cache miss — через single-worker dispatcher (Playwright blocking).
+        val result = withContext(playwrightDispatcher) { fetchBlocking(rawUrl) }
+        // Кэшируем только успешные результаты (ошибки — временные).
+        if (result.success && normalized != null) {
+            if (previewCache.size >= CACHE_MAX_SIZE) {
+                previewCache.clear() // size-guard без LRU — ~1MB, acceptable.
+            }
+            previewCache[normalized] = CacheEntry(result, System.currentTimeMillis() + CACHE_TTL_MS)
+        }
+        return result
     }
 
     private fun fetchBlocking(rawUrl: String): PreviewResponse {

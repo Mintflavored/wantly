@@ -100,6 +100,9 @@ data class UpdateWishRequest(
 )
 
 @Serializable
+data class WishStatusResponse(val status: String)
+
+@Serializable
 data class SetShareRequest(
     val enabled: Boolean,
 )
