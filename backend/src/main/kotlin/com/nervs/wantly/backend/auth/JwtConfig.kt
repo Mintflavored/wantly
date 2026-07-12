@@ -13,16 +13,32 @@ object JwtConfig {
     val secret: String = System.getenv("WANTLY_JWT_SECRET")
         ?: error("WANTLY_JWT_SECRET env var is required (run backend/deploy/setup_env.sh.example)")
     val realm = "Wantly"
-    private val validityMs = 36L * 60 * 60 * 1000
 
-    fun makeToken(userId: Long, email: String): String =
+    private const val ACCESS_VALIDITY_MS = 36L * 60 * 60 * 1000 // 36 часов
+    private const val REFRESH_VALIDITY_MS = 30L * 24 * 60 * 60 * 1000 // 30 дней
+
+    /** Access token: короткоживущий (36h), используется для API запросов. */
+    fun makeAccessToken(userId: Long, email: String): String =
         JWT.create()
             .withIssuer(ISSUER)
             .withAudience(AUDIENCE)
             .withSubject(email)
             .withClaim("userId", userId)
+            .withClaim("type", "access")
             .withIssuedAt(Date())
-            .withExpiresAt(Date(System.currentTimeMillis() + validityMs))
+            .withExpiresAt(Date(System.currentTimeMillis() + ACCESS_VALIDITY_MS))
+            .sign(Algorithm.HMAC256(secret))
+
+    /** Refresh token: долгоживущий (30 дней), используется только для /refresh. */
+    fun makeRefreshToken(userId: Long, email: String): String =
+        JWT.create()
+            .withIssuer(ISSUER)
+            .withAudience(AUDIENCE)
+            .withSubject(email)
+            .withClaim("userId", userId)
+            .withClaim("type", "refresh")
+            .withIssuedAt(Date())
+            .withExpiresAt(Date(System.currentTimeMillis() + REFRESH_VALIDITY_MS))
             .sign(Algorithm.HMAC256(secret))
 
     fun verifier() = JWT.require(Algorithm.HMAC256(secret))
@@ -30,7 +46,18 @@ object JwtConfig {
         .withAudience(AUDIENCE)
         .build()
 
+    /** Извлекает principal из access-token (type=access). */
     fun principal(credential: JWTCredential): UserPrincipal? {
+        val type = credential.payload.getClaim("type")?.asString()
+        if (type != "access") return null
+        val userId = credential.payload.getClaim("userId")?.asLong() ?: return null
+        return UserPrincipal(userId, credential.payload.subject)
+    }
+
+    /** Извлекает principal из refresh-token (type=refresh). */
+    fun refreshPrincipal(credential: JWTCredential): UserPrincipal? {
+        val type = credential.payload.getClaim("type")?.asString()
+        if (type != "refresh") return null
         val userId = credential.payload.getClaim("userId")?.asLong() ?: return null
         return UserPrincipal(userId, credential.payload.subject)
     }

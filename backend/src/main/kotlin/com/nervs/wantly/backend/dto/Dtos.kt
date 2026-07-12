@@ -20,9 +20,15 @@ data class LoginRequest(
 @Serializable
 data class AuthResponse(
     val token: String,
+    val refreshToken: String,
     val userId: Long,
     val email: String,
     val displayName: String?,
+)
+
+@Serializable
+data class RefreshRequest(
+    val refreshToken: String,
 )
 
 // ── Wishlist ──────────────────────────────────────────

@@ -4,9 +4,19 @@ import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
+import com.nervs.wantly.backend.db.PreviewCacheTable
 import com.nervs.wantly.backend.dto.PreviewResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.sql.SqlExpressionBuilder
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
@@ -29,6 +39,8 @@ private val playwrightDispatcher = Dispatchers.IO.limitedParallelism(1)
 // Size-guard: при превышении MAX_SIZE — clear() (проще чем LRU для ~1MB).
 
 private data class CacheEntry(val response: PreviewResponse, val expiresAt: Long)
+
+private val json = Json { ignoreUnknownKeys = true }
 
 private const val CACHE_TTL_MS = 60 * 60 * 1000L // 1 час
 private const val CACHE_MAX_SIZE = 2000
@@ -84,25 +96,86 @@ object PreviewService {
      * полностью (мгновенный ответ для повторных ссылок).
      */
     suspend fun fetch(rawUrl: String): PreviewResponse {
-        // Cache lookup — до playwrightDispatcher, чтобы hit не занимал worker.
         val normalized = normalizeUrl(rawUrl)
+
+        // L1: in-memory cache (мгновенно, без DB/Chromium).
         if (normalized != null) {
-            val cached = previewCache[normalized]
-            if (cached != null && cached.expiresAt > System.currentTimeMillis()) {
-                logger.debug("Cache hit: $normalized")
-                return cached.response
+            val l1 = previewCache[normalized]
+            if (l1 != null && l1.expiresAt > System.currentTimeMillis()) {
+                logger.debug("L1 cache hit: $normalized")
+                return l1.response
             }
         }
+
+        // L2: PostgreSQL cache (переживает restart, ~1ms round-trip).
+        if (normalized != null) {
+            val l2 = l2Lookup(normalized)
+            if (l2 != null) {
+                // Populate L1 from L2.
+                previewCache[normalized] = CacheEntry(l2, System.currentTimeMillis() + CACHE_TTL_MS)
+                logger.debug("L2 cache hit: $normalized")
+                return l2
+            }
+        }
+
         // Cache miss — через single-worker dispatcher (Playwright blocking).
         val result = withContext(playwrightDispatcher) { fetchBlocking(rawUrl) }
+
         // Кэшируем только успешные результаты (ошибки — временные).
         if (result.success && normalized != null) {
             if (previewCache.size >= CACHE_MAX_SIZE) {
-                previewCache.clear() // size-guard без LRU — ~1MB, acceptable.
+                previewCache.clear()
             }
-            previewCache[normalized] = CacheEntry(result, System.currentTimeMillis() + CACHE_TTL_MS)
+            val expiresAt = System.currentTimeMillis() + CACHE_TTL_MS
+            previewCache[normalized] = CacheEntry(result, expiresAt)
+            // L2 write (fire-and-forget — не блокируем ответ).
+            l2Store(normalized, result, expiresAt)
         }
         return result
+    }
+
+    /** L2 lookup: SELECT из PostgreSQL. Lazy cleanup expired entries. */
+    private suspend fun l2Lookup(url: String): PreviewResponse? = runCatching {
+        com.nervs.wantly.backend.db.DatabaseFactory.dbQuery {
+            // Lazy cleanup: удаляем expired записи.
+            val nowStr = Clock.System.now().toString()
+            TransactionManager.current().exec("DELETE FROM preview_cache WHERE expires_at <= '$nowStr'")
+            // Lookup.
+            PreviewCacheTable.selectAll()
+                .where { PreviewCacheTable.url eq url }
+                .singleOrNull()
+                ?.let { row ->
+                    json.decodeFromString(
+                        PreviewResponse.serializer(),
+                        row[PreviewCacheTable.responseJson],
+                    )
+                }
+        }
+    }.getOrNull()
+
+    /** L2 store: UPSERT в PostgreSQL. */
+    private suspend fun l2Store(url: String, response: PreviewResponse, expiresAtMs: Long) {
+        runCatching {
+            com.nervs.wantly.backend.db.DatabaseFactory.dbQuery {
+                val jsonStr = json.encodeToString(PreviewResponse.serializer(), response)
+                val expires = kotlinx.datetime.Instant.fromEpochMilliseconds(expiresAtMs)
+                val existing = PreviewCacheTable.selectAll()
+                    .where { PreviewCacheTable.url eq url }
+                    .singleOrNull()
+                if (existing != null) {
+                    PreviewCacheTable.update({ PreviewCacheTable.url eq url }) {
+                        it[PreviewCacheTable.responseJson] = jsonStr
+                        it[PreviewCacheTable.expiresAt] = expires
+                    }
+                } else {
+                    PreviewCacheTable.insert {
+                        it[PreviewCacheTable.url] = url
+                        it[PreviewCacheTable.responseJson] = jsonStr
+                        it[PreviewCacheTable.expiresAt] = expires
+                    }
+                }
+            }
+        }
     }
 
     private fun fetchBlocking(rawUrl: String): PreviewResponse {

@@ -53,3 +53,11 @@ object Wishes : Table("wishes") {
         index("idx_wishes_wishlist_id", false, wishlistId)
     }
 }
+
+/** Persistent L2 cache для preview результатов. Переживает restart. */
+object PreviewCacheTable : Table("preview_cache") {
+    val url = varchar("url", 2048)
+    val responseJson = text("response_json")
+    val expiresAt = timestamp("expires_at").clientDefault { Clock.System.now() }
+    override val primaryKey = PrimaryKey(url)
+}

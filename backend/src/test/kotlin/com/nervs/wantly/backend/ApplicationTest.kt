@@ -1,6 +1,7 @@
 package com.nervs.wantly.backend
 
 import com.nervs.wantly.backend.auth.JwtConfig
+import com.nervs.wantly.backend.db.PreviewCacheTable
 import com.nervs.wantly.backend.db.Users
 import com.nervs.wantly.backend.db.Wishes
 import com.nervs.wantly.backend.db.Wishlists
@@ -20,6 +21,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -41,7 +43,7 @@ class ApplicationTest {
             password = "",
         )
         transaction {
-            SchemaUtils.create(Users, Wishlists, Wishes)
+            SchemaUtils.create(Users, Wishlists, Wishes, PreviewCacheTable)
         }
     }
 
@@ -51,6 +53,7 @@ class ApplicationTest {
             Wishes.deleteAll()
             Wishlists.deleteAll()
             Users.deleteAll()
+            PreviewCacheTable.deleteAll()
         }
     }
 
@@ -70,6 +73,7 @@ class ApplicationTest {
     @kotlinx.serialization.Serializable
     data class AuthResponse(
         val token: String,
+        val refreshToken: String,
         val userId: Long,
         val email: String,
         val displayName: String? = null,
@@ -909,5 +913,45 @@ class ApplicationTest {
         val resp = client.get("/health/ready")
         assertEquals(HttpStatusCode.OK, resp.status)
         assertEquals("OK", resp.bodyAsText())
+    }
+
+    // ── JWT Refresh ─────────────────────────────────────────────────────
+
+    @Test
+    fun `refresh returns new access and refresh token`() = testApp { client ->
+        val auth = client.register("refresh-test@example.com")
+        assertNotNull(auth.refreshToken)
+
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.refreshToken))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val newAuth: AuthResponse = resp.body()
+        assertNotNull(newAuth.token)
+        assertNotNull(newAuth.refreshToken)
+        // Токены могут совпадать в одной миллисекунде (iat), но оба должны быть валидными.
+        assertEquals(auth.userId, newAuth.userId)
+        assertEquals(auth.email, newAuth.email)
+    }
+
+    @Test
+    fun `refresh with access token instead of refresh returns 401`() = testApp { client ->
+        val auth = client.register("refresh-access@example.com")
+
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.token))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `refresh with invalid token returns 401`() = testApp { client ->
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to "invalid-token-string"))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
     }
 }
