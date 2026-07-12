@@ -111,10 +111,12 @@ object PreviewService {
         if (normalized != null) {
             val l2 = l2Lookup(normalized)
             if (l2 != null) {
-                // Populate L1 from L2.
-                previewCache[normalized] = CacheEntry(l2, System.currentTimeMillis() + CACHE_TTL_MS)
+                // Populate L1 from L2, сохраняя оригинальный expires_at из L2.
+                // Важно: нельзя ставить свежий CACHE_TTL_MS — иначе строка, которая
+                // истекает через минуту, проживёт в L1 ещё час после restart.
+                previewCache[normalized] = CacheEntry(l2.response, l2.expiresAt)
                 logger.debug("L2 cache hit: $normalized")
-                return l2
+                return l2.response
             }
         }
 
@@ -134,8 +136,11 @@ object PreviewService {
         return result
     }
 
-    /** L2 lookup: SELECT из PostgreSQL. Lazy cleanup expired entries. */
-    private suspend fun l2Lookup(url: String): PreviewResponse? = runCatching {
+    /** L2 lookup: SELECT из PostgreSQL. Lazy cleanup expired entries.
+     *  Возвращает [L2Entry] с response и оригинальным expires_at (epoch ms). */
+    private data class L2Entry(val response: PreviewResponse, val expiresAt: Long)
+
+    private suspend fun l2Lookup(url: String): L2Entry? = runCatching {
         com.nervs.wantly.backend.db.DatabaseFactory.dbQuery {
             // Lazy cleanup: удаляем expired записи.
             val nowStr = Clock.System.now().toString()
@@ -145,10 +150,12 @@ object PreviewService {
                 .where { PreviewCacheTable.url eq url }
                 .singleOrNull()
                 ?.let { row ->
-                    json.decodeFromString(
+                    val response = json.decodeFromString(
                         PreviewResponse.serializer(),
                         row[PreviewCacheTable.responseJson],
                     )
+                    val expiresAt = row[PreviewCacheTable.expiresAt].toEpochMilliseconds()
+                    L2Entry(response, expiresAt)
                 }
         }
     }.getOrNull()

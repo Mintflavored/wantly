@@ -22,6 +22,13 @@ import org.jetbrains.exposed.sql.selectAll
 
 fun Route.authRoutes() {
     route("/api/auth") {
+        // Жёсткий rate limit (5/min/IP) только для login/register — это защита
+        // от перебора паролей. /refresh НЕ попадает в этот bucket: refresh-token
+        // криптографически подписан и не поддаётся перебору, а его лимитирование
+        // общим с login bucket'ом ломало sync для нескольких валидных сессий за
+        // одним NAT (5 запросов → 429 → AUTH_EXPIRED у всех). /refresh остаётся
+        // под глобальным лимитом (500/min/IP), чего достаточно для нормальной
+        // работы и достаточно жёстко для abuse.
         rateLimit(AUTHORIZATION_RATE_LIMIT) {
             post("/register") {
                 val req = call.receive<RegisterRequest>()
@@ -79,27 +86,27 @@ fun Route.authRoutes() {
                     displayName = row[Users.displayName],
                 ))
             }
+        }
 
-            post("/refresh") {
-                val req = call.receive<RefreshRequest>()
-                try {
-                    val decoded = JwtConfig.verifier().verify(req.refreshToken)
-                    val credential = JWTCredential(decoded)
-                    val principal = JwtConfig.refreshPrincipal(credential)
-                        ?: return@post call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный refresh token"))
-                    // Выдаём новую пару токенов.
-                    call.respond(AuthResponse(
-                        token = JwtConfig.makeAccessToken(principal.userId, principal.email),
-                        refreshToken = JwtConfig.makeRefreshToken(principal.userId, principal.email),
-                        userId = principal.userId,
-                        email = principal.email,
-                        displayName = dbQuery {
-                            Users.selectAll().where { Users.id eq principal.userId }.singleOrNull()?.get(Users.displayName)
-                        },
-                    ))
-                } catch (e: JWTVerificationException) {
-                    call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный или истекший refresh token"))
-                }
+        post("/refresh") {
+            val req = call.receive<RefreshRequest>()
+            try {
+                val decoded = JwtConfig.verifier().verify(req.refreshToken)
+                val credential = JWTCredential(decoded)
+                val principal = JwtConfig.refreshPrincipal(credential)
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный refresh token"))
+                // Выдаём новую пару токенов.
+                call.respond(AuthResponse(
+                    token = JwtConfig.makeAccessToken(principal.userId, principal.email),
+                    refreshToken = JwtConfig.makeRefreshToken(principal.userId, principal.email),
+                    userId = principal.userId,
+                    email = principal.email,
+                    displayName = dbQuery {
+                        Users.selectAll().where { Users.id eq principal.userId }.singleOrNull()?.get(Users.displayName)
+                    },
+                ))
+            } catch (e: JWTVerificationException) {
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный или истекший refresh token"))
             }
         }
     }
