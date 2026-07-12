@@ -6,7 +6,10 @@ import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
 import com.nervs.wantly.backend.db.PreviewCacheTable
 import com.nervs.wantly.backend.dto.PreviewResponse
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -46,6 +49,14 @@ private const val CACHE_TTL_MS = 60 * 60 * 1000L // 1 час
 private const val CACHE_MAX_SIZE = 2000
 
 private val previewCache = ConcurrentHashMap<String, CacheEntry>()
+
+/**
+ * Отдельный CoroutineScope для L2 cache writes (fire-and-forget).
+ * SupervisorJob → одна упавшая запись не отменяет остальные.
+ * L2 — только кэш, переживает потерю записи; не должна блокировать ответ
+ * клиенту или падать из-за недоступности БД.
+ */
+private val cacheWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /**
  * Серверный парсинг ссылок через Playwright + Chromium.
@@ -130,8 +141,9 @@ object PreviewService {
             }
             val expiresAt = System.currentTimeMillis() + CACHE_TTL_MS
             previewCache[normalized] = CacheEntry(result, expiresAt)
-            // L2 write (fire-and-forget — не блокируем ответ).
-            l2Store(normalized, result, expiresAt)
+            // L2 write (fire-and-forget): не блокируем ответ клиенту.
+            // SupervisorJob → ошибка записи не влияет на другие writes.
+            cacheWriteScope.launch { l2Store(normalized, result, expiresAt) }
         }
         return result
     }
