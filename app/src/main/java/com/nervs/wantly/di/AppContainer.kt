@@ -17,7 +17,13 @@ class AppContainer(context: Context) {
     val sessionManager = SessionManager(context)
     val guestCounter = GuestCounter(context)
     val linkPreviewService = LinkPreviewService()
-    val api = WantlyApi(tokenProvider = { sessionManager.tokenBlocking() })
+    val api = WantlyApi(
+        tokenProvider = { sessionManager.tokenBlocking() },
+        refreshTokenProvider = { sessionManager.refreshTokenBlocking() },
+        onTokensRefreshed = { token, refreshToken ->
+            kotlinx.coroutines.runBlocking { sessionManager.updateTokens(token, refreshToken) }
+        },
+    )
     val syncManager = SyncManager(database, api, emailProvider = { sessionManager.email.first() })
     val repository = WishlistRepository(
         wishlistDao = database.wishlistDao(),

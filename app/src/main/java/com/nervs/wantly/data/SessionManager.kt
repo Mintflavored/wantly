@@ -23,6 +23,7 @@ class SessionManager(private val context: Context) {
 
     private object Keys {
         val TOKEN = stringPreferencesKey("jwt_token")
+        val REFRESH_TOKEN = stringPreferencesKey("refresh_token")
         val USER_ID = longPreferencesKey("user_id")
         val EMAIL = stringPreferencesKey("email")
         val DISPLAY_NAME = stringPreferencesKey("display_name")
@@ -43,14 +44,28 @@ class SessionManager(private val context: Context) {
     val pendingReloginEmail: Flow<String?> =
         context.dataStore.data.map { it[Keys.PENDING_RELOGIN_EMAIL] }
 
-    suspend fun saveSession(token: String, userId: Long, email: String, displayName: String?) {
+    suspend fun saveSession(token: String, refreshToken: String, userId: Long, email: String, displayName: String?) {
         context.dataStore.edit { prefs ->
             prefs[Keys.TOKEN] = token
+            prefs[Keys.REFRESH_TOKEN] = refreshToken
             prefs[Keys.USER_ID] = userId
             prefs[Keys.EMAIL] = email
             if (displayName != null) prefs[Keys.DISPLAY_NAME] = displayName
         }
     }
+
+    suspend fun updateTokens(token: String, refreshToken: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.TOKEN] = token
+            prefs[Keys.REFRESH_TOKEN] = refreshToken
+        }
+    }
+
+    fun refreshTokenBlocking(): String? = runCatching {
+        kotlinx.coroutines.runBlocking {
+            context.dataStore.data.first()[Keys.REFRESH_TOKEN]
+        }
+    }.getOrNull()
 
     /** Запомнить email аккаунта, чьи dirty rows сохранены после AUTH_EXPIRED. */
     suspend fun setPendingReloginEmail(email: String?) {
@@ -72,6 +87,7 @@ class SessionManager(private val context: Context) {
     suspend fun clearSession() {
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.TOKEN)
+            prefs.remove(Keys.REFRESH_TOKEN)
             prefs.remove(Keys.USER_ID)
             prefs.remove(Keys.EMAIL)
             prefs.remove(Keys.DISPLAY_NAME)

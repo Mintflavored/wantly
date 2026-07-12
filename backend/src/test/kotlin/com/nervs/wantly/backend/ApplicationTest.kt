@@ -1,6 +1,9 @@
 package com.nervs.wantly.backend
 
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
 import com.nervs.wantly.backend.auth.JwtConfig
+import com.nervs.wantly.backend.db.PreviewCacheTable
 import com.nervs.wantly.backend.db.Users
 import com.nervs.wantly.backend.db.Wishes
 import com.nervs.wantly.backend.db.Wishlists
@@ -14,12 +17,15 @@ import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.deleteAll
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.transactions.transaction
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -41,7 +47,7 @@ class ApplicationTest {
             password = "",
         )
         transaction {
-            SchemaUtils.create(Users, Wishlists, Wishes)
+            SchemaUtils.create(Users, Wishlists, Wishes, PreviewCacheTable)
         }
     }
 
@@ -51,6 +57,7 @@ class ApplicationTest {
             Wishes.deleteAll()
             Wishlists.deleteAll()
             Users.deleteAll()
+            PreviewCacheTable.deleteAll()
         }
     }
 
@@ -70,6 +77,7 @@ class ApplicationTest {
     @kotlinx.serialization.Serializable
     data class AuthResponse(
         val token: String,
+        val refreshToken: String,
         val userId: Long,
         val email: String,
         val displayName: String? = null,
@@ -909,5 +917,89 @@ class ApplicationTest {
         val resp = client.get("/health/ready")
         assertEquals(HttpStatusCode.OK, resp.status)
         assertEquals("OK", resp.bodyAsText())
+    }
+
+    // ── JWT Refresh ─────────────────────────────────────────────────────
+
+    @Test
+    fun `refresh returns new access and refresh token`() = testApp { client ->
+        val auth = client.register("refresh-test@example.com")
+        assertNotNull(auth.refreshToken)
+
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.refreshToken))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val newAuth: AuthResponse = resp.body()
+        assertNotNull(newAuth.token)
+        assertNotNull(newAuth.refreshToken)
+        // Токены могут совпадать в одной миллисекунде (iat), но оба должны быть валидными.
+        assertEquals(auth.userId, newAuth.userId)
+        assertEquals(auth.email, newAuth.email)
+    }
+
+    @Test
+    fun `refresh with access token instead of refresh returns 401`() = testApp { client ->
+        val auth = client.register("refresh-access@example.com")
+
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.token))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `refresh with invalid token returns 401`() = testApp { client ->
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to "invalid-token-string"))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `refresh rejected after user row deleted`() = testApp { client ->
+        // Регистрируем пользователя и получаем refresh-token.
+        val auth = client.register("deleted-user@example.com")
+        assertNotNull(auth.refreshToken)
+
+        // Симулируем удаление аккаунта (admin cleanup / self-delete).
+        transaction {
+            Users.deleteWhere { Users.id eq auth.userId }
+        }
+
+        // Refresh-token криптографически валиден (30 дней), но пользователя нет.
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.refreshToken))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    // ── Legacy access-token (без claim `type`, от предыдущего деплоя) ────
+
+    @Test
+    fun `legacy access token without type claim is accepted`() = testApp { client ->
+        // Регистрируем пользователя, чтобы получить реальный userId/email.
+        val auth = client.register("legacy-token@example.com")
+
+        // Эмулируем access-token от предыдущего деплоя: тот же secret, но БЕЗ claim `type`.
+        val legacyToken = JWT.create()
+            .withIssuer("wantly")
+            .withAudience("wantly-users")
+            .withSubject(auth.email)
+            .withClaim("userId", auth.userId)
+            // намеренно отсутствует withClaim("type", ...)
+            .withIssuedAt(java.util.Date())
+            .withExpiresAt(java.util.Date(System.currentTimeMillis() + 60 * 60 * 1000))
+            .sign(Algorithm.HMAC256(JwtConfig.secret))
+
+        // Защищённый endpoint должен принять legacy access-token без принудительного re-login.
+        val resp = client.get("/api/wishlists") {
+            header("Authorization", "Bearer $legacyToken")
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
     }
 }

@@ -69,7 +69,7 @@ class AuthViewModel(
                 // Привязываем все guest-rows (включая legacy без ownerEmail,
                 // если guard их не вытер) к этому аккаунту.
                 syncManager.claimGuestRows(r.email)
-                sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
+                sessionManager.saveSession(r.token, r.refreshToken, r.userId, r.email, r.displayName)
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = true)
             } catch (e: ApiException) {
@@ -89,7 +89,7 @@ class AuthViewModel(
                 val r = repository.api.login(st.email.trim(), st.password)
                 guardAgainstForeignRows(r.email)
                 syncManager.claimGuestRows(r.email)
-                sessionManager.saveSession(r.token, r.userId, r.email, r.displayName)
+                sessionManager.saveSession(r.token, r.refreshToken, r.userId, r.email, r.displayName)
                 update { copy(isLoading = false, isSuccess = true) }
                 syncManager.syncAfterAuthScoped(isRegistration = false)
             } catch (e: ApiException) {

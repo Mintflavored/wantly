@@ -17,7 +17,11 @@ import java.util.concurrent.TimeUnit
  * В гостевом режиме все вызовы игнорируются — данные хранятся локально (Room).
  * После регистрации/входа клиент активируется и работает с сервером.
  */
-class WantlyApi(private val tokenProvider: () -> String?) {
+class WantlyApi(
+    private val tokenProvider: () -> String?,
+    private val refreshTokenProvider: () -> String? = { null },
+    private val onTokensRefreshed: ((String, String) -> Unit)? = null,
+) {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -38,6 +42,9 @@ class WantlyApi(private val tokenProvider: () -> String?) {
 
     suspend fun login(email: String, password: String): AuthResponse =
         post("api/auth/login", AuthRequest(email, password))
+
+    suspend fun refreshToken(refreshToken: String): AuthResponse =
+        post("api/auth/refresh", RefreshRequest(refreshToken))
 
     // ── Wishlists ─────────────────────────────────────────
 
@@ -142,7 +149,33 @@ class WantlyApi(private val tokenProvider: () -> String?) {
     private suspend fun request(path: String, method: String): String =
         withContext(Dispatchers.IO) { doRequest(path, method, null) }
 
-    private fun doRequest(path: String, method: String, body: okhttp3.RequestBody?): String {
+    private suspend fun doRequest(path: String, method: String, body: okhttp3.RequestBody?): String {
+        val response = executeWithAuth(path, method, body)
+        // 401: пробуем refresh токена, затем retry один раз.
+        if (response.code == 401 && path != "api/auth/refresh") {
+            val rt = refreshTokenProvider()
+            if (rt != null) {
+                runCatching {
+                    val refreshResp = refreshTokenBlocking(rt)
+                    onTokensRefreshed?.invoke(refreshResp.token, refreshResp.refreshToken)
+                }.onSuccess {
+                    // Retry с новым access token.
+                    val retryResp = executeWithAuth(path, method, body)
+                    if (!retryResp.isSuccessful) {
+                        throw ApiException(retryResp.code, parseError(retryResp.errorBody))
+                    }
+                    return retryResp.body
+                }
+            }
+        }
+        if (!response.isSuccessful) {
+            throw ApiException(response.code, parseError(response.errorBody))
+        }
+        return response.body
+    }
+
+    /** Execute HTTP request, return (code, body, errorBody). */
+    private fun executeWithAuth(path: String, method: String, body: okhttp3.RequestBody?): HttpResult {
         val builder = Request.Builder()
             .url("$BASE_URL$path")
             .method(method, body)
@@ -151,10 +184,29 @@ class WantlyApi(private val tokenProvider: () -> String?) {
 
         client.newCall(builder.build()).execute().use { resp ->
             val responseBody = resp.body?.string().orEmpty()
+            return HttpResult(resp.code, responseBody)
+        }
+    }
+
+    private data class HttpResult(val code: Int, val body: String) {
+        val isSuccessful get() = code in 200..299
+        val errorBody get() = body
+    }
+
+    /** Synchronous refresh-token call (inside withContext(Dispatchers.IO)). */
+    private fun refreshTokenBlocking(refreshToken: String): AuthResponse {
+        val req = RefreshRequest(refreshToken)
+        val jsonBody = json.encodeToString(serializer(), req).toRequestBody(jsonMedia)
+        val builder = Request.Builder()
+            .url("$BASE_URL${"api/auth/refresh"}")
+            .method("POST", jsonBody)
+            .header("Content-Type", "application/json")
+        client.newCall(builder.build()).execute().use { resp ->
+            val respBody = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                throw ApiException(resp.code, parseError(responseBody))
+                throw ApiException(resp.code, parseError(respBody))
             }
-            return responseBody
+            return json.decodeFromString(serializer(), respBody)
         }
     }
 
