@@ -62,7 +62,9 @@ import com.nervs.wantly.R
 import com.nervs.wantly.data.local.WishlistWithCount
 import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishlistEntity
+import com.nervs.wantly.ui.components.SkeletonList
 import com.nervs.wantly.ui.components.WishlistFormDialog
+import com.nervs.wantly.ui.components.WishlistRowSkeleton
 import com.nervs.wantly.ui.rememberAppViewModel
 import com.nervs.wantly.ui.theme.WishlistAccents
 
@@ -70,7 +72,6 @@ import com.nervs.wantly.ui.theme.WishlistAccents
 @Composable
 fun HomeScreen(onWishlistClick: (Long) -> Unit) {
     val vm: HomeViewModel = rememberAppViewModel { HomeViewModel(it.repository, it.syncManager) }
-    val wishlists by vm.wishlists.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var wishlistToDelete by remember { mutableStateOf<WishlistEntity?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -107,37 +108,70 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
             )
         },
     ) { innerPadding ->
-        if (wishlists.isEmpty()) {
-            EmptyHome(Modifier.fillMaxSize().padding(innerPadding))
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding() + 16.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(wishlists, key = { it.wishlist.id }) { item ->
-                    WishlistRow(
-                        item = item,
-                        onClick = { onWishlistClick(item.wishlist.id) },
-                        onLongClick = { wishlistToDelete = item.wishlist },
-                        onSyncError = {
-                            scope.launch {
-                                val result = snackbarHostState.showSnackbar(
-                                    message = syncErrorMessage,
-                                    actionLabel = syncErrorEdit,
-                                    duration = SnackbarDuration.Long,
-                                )
-                                if (result == SnackbarResult.ActionPerformed) {
-                                    onWishlistClick(item.wishlist.id)
-                                }
-                            }
-                        },
+        val state = vm.state.collectAsStateWithLifecycle().value
+        when (state) {
+            HomeUiState.Loading -> {
+                SkeletonList(
+                    count = 4,
+                    item = { WishlistRowSkeleton() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = innerPadding.calculateTopPadding(),
+                            bottom = innerPadding.calculateBottomPadding(),
+                        ),
+                )
+            }
+            HomeUiState.Error -> {
+                // Room flow крайне редко падает, но safety: показываем empty-подобный state.
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        stringResource(R.string.home_empty_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
                     )
+                }
+            }
+            is HomeUiState.Loaded -> state.wishlists.let { wishlists ->
+                if (wishlists.isEmpty()) {
+                    EmptyHome(Modifier.fillMaxSize().padding(innerPadding))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = innerPadding.calculateTopPadding(),
+                            bottom = innerPadding.calculateBottomPadding() + 16.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(wishlists, key = { it.wishlist.id }) { item ->
+                            WishlistRow(
+                                item = item,
+                                onClick = { onWishlistClick(item.wishlist.id) },
+                                onLongClick = { wishlistToDelete = item.wishlist },
+                                onSyncError = {
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = syncErrorMessage,
+                                            actionLabel = syncErrorEdit,
+                                            duration = SnackbarDuration.Long,
+                                        )
+                                        if (result == SnackbarResult.ActionPerformed) {
+                                            onWishlistClick(item.wishlist.id)
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }

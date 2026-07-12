@@ -53,6 +53,8 @@ fun ShareWishlistDialog(
     currentToken: String?,
     toggleErrorTick: Int = 0,
     isSwitchEnabled: Boolean = true,
+    tokenLoadError: Boolean = false,
+    onRetryLoadToken: () -> Unit = {},
     onDismiss: () -> Unit,
     onToggleShare: (Boolean) -> Unit,
 ) {
@@ -81,62 +83,76 @@ fun ShareWishlistDialog(
         title = { Text(stringResource(R.string.dialog_share_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(stringResource(R.string.dialog_share_switch_label))
-                    Switch(
-                        checked = isShared,
-                        enabled = !isToggling && isSwitchEnabled,
-                        onCheckedChange = { newValue ->
-                            // НЕ меняем isShared/token локально — сервер может отклонить.
-                            // При успехе props обновятся, LaunchedEffect синхронизирует.
-                            // При ошибке switch остаётся в прежнем положении.
-                            isToggling = true
-                            onToggleShare(newValue)
-                        },
-                    )
-                }
-
-                if (isShared && link != null) {
+                if (tokenLoadError) {
+                    // Ошибка первичной загрузки token: вместо молча disabled switch
+                    // показываем пояснение + retry (M5). Раньше isLoadingToken зависал
+                    // true навсегда, switch оставался disabled без объяснения причины.
                     Text(
-                        stringResource(R.string.dialog_share_link_label),
-                        style = MaterialTheme.typography.labelLarge,
+                        stringResource(R.string.share_token_load_error),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.outline,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = link,
-                            onValueChange = {},
-                            readOnly = true,
-                            textStyle = TextStyle(fontFamily = FontFamily.Monospace),
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(rememberScrollState()),
-                        )
-                        Spacer(Modifier.size(8.dp))
-                        TextButton(onClick = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
-                                as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("link", link))
-                            Toast.makeText(context, R.string.link_copied, Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.ContentCopy, null)
-                            Spacer(Modifier.size(4.dp))
-                            Text(stringResource(R.string.action_copy_link))
-                        }
+                    TextButton(onClick = onRetryLoadToken) {
+                        Text(stringResource(R.string.action_retry))
                     }
-                    TextButton(onClick = {
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "Мои пожелания: $link")
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.dialog_share_switch_label))
+                        Switch(
+                            checked = isShared,
+                            enabled = !isToggling && isSwitchEnabled,
+                            onCheckedChange = { newValue ->
+                                // НЕ меняем isShared/token локально — сервер может отклонить.
+                                // При успехе props обновятся, LaunchedEffect синхронизирует.
+                                // При ошибке switch остаётся в прежнем положении.
+                                isToggling = true
+                                onToggleShare(newValue)
+                            },
+                        )
+                    }
+
+                    if (isShared && link != null) {
+                        Text(
+                            stringResource(R.string.dialog_share_link_label),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = link,
+                                onValueChange = {},
+                                readOnly = true,
+                                textStyle = TextStyle(fontFamily = FontFamily.Monospace),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .horizontalScroll(rememberScrollState()),
+                            )
+                            Spacer(Modifier.size(8.dp))
+                            TextButton(onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                    as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("link", link))
+                                Toast.makeText(context, R.string.link_copied, Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(Icons.Default.ContentCopy, null)
+                                Spacer(Modifier.size(4.dp))
+                                Text(stringResource(R.string.action_copy_link))
+                            }
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, null))
-                    }) {
-                        Icon(Icons.Default.Share, null)
-                        Spacer(Modifier.size(4.dp))
-                        Text(stringResource(R.string.action_share_via))
+                        TextButton(onClick = {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, "Мои пожелания: $link")
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, null))
+                        }) {
+                            Icon(Icons.Default.Share, null)
+                            Spacer(Modifier.size(4.dp))
+                            Text(stringResource(R.string.action_share_via))
+                        }
                     }
                 }
             }

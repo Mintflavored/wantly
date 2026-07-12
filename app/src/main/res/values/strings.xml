@@ -115,4 +115,5 @@
     <string name="shared_not_found">Список не найден. Возможно, ссылка устарела или список перестали делиться.</string>
     <string name="shared_load_error">Не удалось загрузить список. Проверьте подключение к интернету.</string>
     <string name="action_retry">Повторить</string>
+    <string name="share_token_load_error">Не удалось загрузить данные о ссылке. Проверьте подключение к интернету.</string>
 </resources>

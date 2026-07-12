@@ -6,20 +6,35 @@ import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.WishlistWithCount
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.repository.WishlistRepository
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/**
+ * Sealed UI state для HomeScreen.
+ *
+ * Empty не отдельное состояние — валидный результат внутри [Loaded]
+ * (как в SharedWishlistUiState — эталонном sealed state проекта).
+ * Loading показывается только пока Room отдаёт первую эмиссию.
+ */
+sealed interface HomeUiState {
+    data object Loading : HomeUiState
+    data class Loaded(val wishlists: List<WishlistWithCount>) : HomeUiState
+    data object Error : HomeUiState
+}
 
 class HomeViewModel(
     private val repository: WishlistRepository,
     private val syncManager: SyncManager,
 ) : ViewModel() {
-    val wishlists: StateFlow<List<WishlistWithCount>> =
+    val state: StateFlow<HomeUiState> =
         repository.observeWishlists()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .map { list -> HomeUiState.Loaded(list) as HomeUiState }
+            .catch { emit(HomeUiState.Error) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState.Loading)
 
     fun createWishlist(title: String, description: String?, coverColor: Int) {
         viewModelScope.launch {
