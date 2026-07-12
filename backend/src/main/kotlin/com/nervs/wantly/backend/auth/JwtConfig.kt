@@ -46,10 +46,18 @@ object JwtConfig {
         .withAudience(AUDIENCE)
         .build()
 
-    /** Извлекает principal из access-token (type=access). */
+    /**
+     * Извлекает principal из access-token.
+     *
+     * Принимает как `type=access` (новые токены), так и токены без claim `type` —
+     * legacy access-token от предыдущего деплоя (до PR #15), у которых не было claim `type`.
+     * Это позволяет уже залогиненным клиентам продолжать работу после rollout,
+     * пока их 36h access-token не истечёт и клиент не получит новую пару через /refresh.
+     * Refresh-токены при этом по-прежнему требуют `type=refresh` (см. [refreshPrincipal]).
+     */
     fun principal(credential: JWTCredential): UserPrincipal? {
         val type = credential.payload.getClaim("type")?.asString()
-        if (type != "access") return null
+        if (type != null && type != "access") return null
         val userId = credential.payload.getClaim("userId")?.asLong() ?: return null
         return UserPrincipal(userId, credential.payload.subject)
     }

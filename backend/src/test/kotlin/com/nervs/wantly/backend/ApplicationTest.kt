@@ -1,5 +1,7 @@
 package com.nervs.wantly.backend
 
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
 import com.nervs.wantly.backend.auth.JwtConfig
 import com.nervs.wantly.backend.db.PreviewCacheTable
 import com.nervs.wantly.backend.db.Users
@@ -953,5 +955,30 @@ class ApplicationTest {
             setBody(mapOf("refreshToken" to "invalid-token-string"))
         }
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    // ── Legacy access-token (без claim `type`, от предыдущего деплоя) ────
+
+    @Test
+    fun `legacy access token without type claim is accepted`() = testApp { client ->
+        // Регистрируем пользователя, чтобы получить реальный userId/email.
+        val auth = client.register("legacy-token@example.com")
+
+        // Эмулируем access-token от предыдущего деплоя: тот же secret, но БЕЗ claim `type`.
+        val legacyToken = JWT.create()
+            .withIssuer("wantly")
+            .withAudience("wantly-users")
+            .withSubject(auth.email)
+            .withClaim("userId", auth.userId)
+            // намеренно отсутствует withClaim("type", ...)
+            .withIssuedAt(java.util.Date())
+            .withExpiresAt(java.util.Date(System.currentTimeMillis() + 60 * 60 * 1000))
+            .sign(Algorithm.HMAC256(JwtConfig.secret))
+
+        // Защищённый endpoint должен принять legacy access-token без принудительного re-login.
+        val resp = client.get("/api/wishlists") {
+            header("Authorization", "Bearer $legacyToken")
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
     }
 }
