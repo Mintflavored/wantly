@@ -95,15 +95,26 @@ fun Route.authRoutes() {
                 val credential = JWTCredential(decoded)
                 val principal = JwtConfig.refreshPrincipal(credential)
                     ?: return@post call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный refresh token"))
-                // Выдаём новую пару токенов.
+                // Загружаем user ДО выдачи новых токенов: если аккаунт удалён
+                // (admin cleanup, self-delete), refresh JWT формально ещё валиден
+                // (30 дней), но доступ надо отозвать. Иначе удалённый аккаунт
+                // остаётся аутентифицированным до истечения refresh-token, а
+                // последующие writes падают на FK-нарушениях.
+                val user = dbQuery {
+                    Users.selectAll().where { Users.id eq principal.userId }.singleOrNull()
+                }
+                if (user == null) {
+                    return@post call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Аккаунт не найден"))
+                }
+                // Выдаём новую пару токенов. email берём из актуальной строки —
+                // на случай если он изменился после выдачи refresh-token.
+                val email = user[Users.email]
                 call.respond(AuthResponse(
-                    token = JwtConfig.makeAccessToken(principal.userId, principal.email),
-                    refreshToken = JwtConfig.makeRefreshToken(principal.userId, principal.email),
+                    token = JwtConfig.makeAccessToken(principal.userId, email),
+                    refreshToken = JwtConfig.makeRefreshToken(principal.userId, email),
                     userId = principal.userId,
-                    email = principal.email,
-                    displayName = dbQuery {
-                        Users.selectAll().where { Users.id eq principal.userId }.singleOrNull()?.get(Users.displayName)
-                    },
+                    email = email,
+                    displayName = user[Users.displayName],
                 ))
             } catch (e: JWTVerificationException) {
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Недействительный или истекший refresh token"))

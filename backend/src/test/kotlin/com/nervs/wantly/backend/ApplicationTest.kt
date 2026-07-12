@@ -17,7 +17,9 @@ import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.deleteAll
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.transactions.transaction
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -953,6 +955,25 @@ class ApplicationTest {
         val resp = client.post("/api/auth/refresh") {
             contentType(ContentType.Application.Json)
             setBody(mapOf("refreshToken" to "invalid-token-string"))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `refresh rejected after user row deleted`() = testApp { client ->
+        // Регистрируем пользователя и получаем refresh-token.
+        val auth = client.register("deleted-user@example.com")
+        assertNotNull(auth.refreshToken)
+
+        // Симулируем удаление аккаунта (admin cleanup / self-delete).
+        transaction {
+            Users.deleteWhere { Users.id eq auth.userId }
+        }
+
+        // Refresh-token криптографически валиден (30 дней), но пользователя нет.
+        val resp = client.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refreshToken" to auth.refreshToken))
         }
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
     }
