@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nervs.wantly.R
@@ -42,7 +43,9 @@ import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.ui.common.openUrl
 import com.nervs.wantly.ui.components.ShareWishlistDialog
+import com.nervs.wantly.ui.components.SkeletonList
 import com.nervs.wantly.ui.components.WishCard
+import com.nervs.wantly.ui.components.WishCardSkeleton
 import com.nervs.wantly.ui.components.WishlistFormDialog
 import com.nervs.wantly.ui.rememberAppViewModel
 
@@ -57,11 +60,11 @@ fun WishlistDetailScreen(
     val context = LocalContext.current
     val vm: WishlistDetailViewModel =
         rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository, it.syncManager, it.api) }
-    val wishlist by vm.wishlist.collectAsStateWithLifecycle()
-    val wishes by vm.wishes.collectAsStateWithLifecycle()
+    val state = vm.state.collectAsStateWithLifecycle().value
     val shareToken by vm.shareToken.collectAsStateWithLifecycle()
     val toggleErrorCount by vm.toggleErrorCount.collectAsStateWithLifecycle()
     val isLoadingToken by vm.isLoadingToken.collectAsStateWithLifecycle()
+    val tokenLoadError by vm.tokenLoadError.collectAsStateWithLifecycle()
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
     val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
@@ -74,162 +77,202 @@ fun WishlistDetailScreen(
     var showEditList by remember { mutableStateOf(false) }
     var showShareDialog by remember { mutableStateOf(false) }
 
-    val currentWishlist = wishlist
-    if (currentWishlist == null) {
-        // Список удалён или ещё не загружен. Room отдаёт почти мгновенно,
-        // поэтому null на практике = список не существует.
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {},
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
-                        }
-                    },
-                )
-            },
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    stringResource(R.string.wishlist_not_found),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.outline,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-        return
-    }
-
-    Scaffold(
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                title = { Text(currentWishlist.title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
-                    }
-                },
-                actions = {
-                    // Share доступен только для синхронизированных списков (есть serverId).
-                    // Local-only/guest списки нельзя share — toggleShare всё равно не дойдёт
-                    // до сервера. Скрываем кнопку вместо показа неработающего dialog.
-                    if (currentWishlist.serverId != null) {
-                        IconButton(onClick = { showShareDialog = true }) {
-                            Icon(Icons.Default.Share, contentDescription = cdShare)
-                        }
-                    }
-                    IconButton(onClick = { showEditList = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = cdEditWishlist)
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAddWish) {
-                Icon(Icons.Default.Add, cdAddWish)
-            }
-        },
-    ) { innerPadding ->
-        if (wishes.isEmpty()) {
-            EmptyWishes(Modifier.fillMaxSize().padding(innerPadding))
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding() + 80.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(wishes, key = { it.id }) { wish ->
-                    WishCard(
-                        wish = wish,
-                        onCycleStatus = { vm.cycleStatus(wish) },
-                        onOpen = { openUrl(context, wish.url) },
-                        onDelete = { wishToDelete = wish },
-                        onEdit = { onEditWish(wish.id) },
-                        onSyncError = {
-                            scope.launch {
-                                val result = snackbarHostState.showSnackbar(
-                                    message = syncErrorMessage,
-                                    actionLabel = syncErrorEdit,
-                                    duration = androidx.compose.material3.SnackbarDuration.Long,
-                                )
-                                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                                    onEditWish(wish.id)
-                                }
+    // Loading / NotFound рендерятся с TopAppBar+back, но без actions/FAB.
+    // Loaded — полноценный экран.
+    when (state) {
+        WishlistDetailUiState.Loading -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {},
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
                             }
                         },
                     )
-                }
+                },
+            ) { innerPadding ->
+                SkeletonList(
+                    count = 3,
+                    item = { WishCardSkeleton() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = innerPadding.calculateTopPadding(),
+                            bottom = innerPadding.calculateBottomPadding(),
+                        ),
+                )
             }
+            return
         }
-    }
-
-    // Пункт 5: подтверждение удаления желания
-    wishToDelete?.let { wish ->
-        AlertDialog(
-            onDismissRequest = { wishToDelete = null },
-            title = { Text(stringResource(R.string.dialog_delete_wish_title)) },
-            text = {
-                Text(stringResource(R.string.dialog_delete_wish_message, wish.title))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteWish(wish)
-                    wishToDelete = null
-                }) {
+        WishlistDetailUiState.NotFound -> {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {},
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
+                            }
+                        },
+                    )
+                },
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text(
-                        stringResource(R.string.action_delete),
-                        color = MaterialTheme.colorScheme.error,
+                        stringResource(R.string.wishlist_not_found),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.outline,
+                        textAlign = TextAlign.Center,
                     )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { wishToDelete = null }) {
-                    Text(stringResource(R.string.action_cancel))
+            }
+            return
+        }
+        is WishlistDetailUiState.Loaded -> state.let { st ->
+            val currentWishlist = st.wishlist
+            val wishes = st.wishes
+            Scaffold(
+                snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                currentWishlist.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, cdBack)
+                            }
+                        },
+                        actions = {
+                            // Share доступен только для синхронизированных списков (есть serverId).
+                            // Local-only/guest списки нельзя share — toggleShare всё равно не дойдёт
+                            // до сервера. Скрываем кнопку вместо показа неработающего dialog.
+                            if (currentWishlist.serverId != null) {
+                                IconButton(onClick = { showShareDialog = true }) {
+                                    Icon(Icons.Default.Share, contentDescription = cdShare)
+                                }
+                            }
+                            IconButton(onClick = { showEditList = true }) {
+                                Icon(Icons.Default.Edit, contentDescription = cdEditWishlist)
+                            }
+                        },
+                    )
+                },
+                floatingActionButton = {
+                    FloatingActionButton(onClick = onAddWish) {
+                        Icon(Icons.Default.Add, cdAddWish)
+                    }
+                },
+            ) { innerPadding ->
+                if (wishes.isEmpty()) {
+                    EmptyWishes(Modifier.fillMaxSize().padding(innerPadding))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = innerPadding.calculateTopPadding(),
+                            bottom = innerPadding.calculateBottomPadding() + 80.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(wishes, key = { it.id }) { wish ->
+                            WishCard(
+                                wish = wish,
+                                onCycleStatus = { vm.cycleStatus(wish) },
+                                onOpen = { openUrl(context, wish.url) },
+                                onDelete = { wishToDelete = wish },
+                                onEdit = { onEditWish(wish.id) },
+                                onSyncError = {
+                                    scope.launch {
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = syncErrorMessage,
+                                            actionLabel = syncErrorEdit,
+                                            duration = androidx.compose.material3.SnackbarDuration.Long,
+                                        )
+                                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                            onEditWish(wish.id)
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
-            },
-        )
-    }
+            }
 
-    // Редактирование названия/описания/цвета списка (prefill из текущего).
-    if (showEditList) {
-        WishlistFormDialog(
-            titleRes = R.string.dialog_edit_list_title,
-            confirmLabelRes = R.string.action_save,
-            onDismiss = { showEditList = false },
-            onConfirm = { title, description, color ->
-                vm.updateWishlist(currentWishlist, title, description, color)
-                showEditList = false
-            },
-            initialTitle = currentWishlist.title,
-            initialDescription = currentWishlist.description.orEmpty(),
-            initialColor = currentWishlist.coverColor,
-        )
-    }
+            // Пункт 5: подтверждение удаления желания
+            wishToDelete?.let { wish ->
+                AlertDialog(
+                    onDismissRequest = { wishToDelete = null },
+                    title = { Text(stringResource(R.string.dialog_delete_wish_title)) },
+                    text = {
+                        Text(stringResource(R.string.dialog_delete_wish_message, wish.title))
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            vm.deleteWish(wish)
+                            wishToDelete = null
+                        }) {
+                            Text(
+                                stringResource(R.string.action_delete),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { wishToDelete = null }) {
+                            Text(stringResource(R.string.action_cancel))
+                        }
+                    },
+                )
+            }
 
-    // Диалог управления публичным доступом.
-    if (showShareDialog) {
-        ShareWishlistDialog(
-            isCurrentlyShared = currentWishlist.isShared || shareToken != null,
-            currentToken = shareToken,
-            toggleErrorTick = toggleErrorCount,
-            isSwitchEnabled = !isLoadingToken,
-            onDismiss = { showShareDialog = false },
-            onToggleShare = { enabled ->
-                vm.setShare(enabled)
-            },
-        )
+            // Редактирование названия/описания/цвета списка (prefill из текущего).
+            if (showEditList) {
+                WishlistFormDialog(
+                    titleRes = R.string.dialog_edit_list_title,
+                    confirmLabelRes = R.string.action_save,
+                    onDismiss = { showEditList = false },
+                    onConfirm = { title, description, color ->
+                        vm.updateWishlist(currentWishlist, title, description, color)
+                        showEditList = false
+                    },
+                    initialTitle = currentWishlist.title,
+                    initialDescription = currentWishlist.description.orEmpty(),
+                    initialColor = currentWishlist.coverColor,
+                )
+            }
+
+            // Диалог управления публичным доступом.
+            if (showShareDialog) {
+                ShareWishlistDialog(
+                    isCurrentlyShared = currentWishlist.isShared || shareToken != null,
+                    currentToken = shareToken,
+                    toggleErrorTick = toggleErrorCount,
+                    isSwitchEnabled = !isLoadingToken && !tokenLoadError,
+                    tokenLoadError = tokenLoadError,
+                    onRetryLoadToken = { vm.loadShareToken() },
+                    onDismiss = { showShareDialog = false },
+                    onToggleShare = { enabled ->
+                        vm.setShare(enabled)
+                    },
+                )
+            }
+        }
     }
 }
 

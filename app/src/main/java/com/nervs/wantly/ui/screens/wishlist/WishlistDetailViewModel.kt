@@ -12,9 +12,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/**
+ * Sealed UI state для WishlistDetailScreen.
+ *
+ * [Loading] показывается пока Room отдаёт первую эмиссию. [NotFound] —
+ * wishlist == null (список не существует или был удалён). [Loaded] —
+ * данные доступны. Empty wishes обрабатываются внутри [Loaded].
+ *
+ * До этого экран использовал `wishlist: StateFlow<WishlistEntity?>` с initial
+ * `null` — невозможно было отличить «грузится» от «не существует», что
+ * приводило к ложному «Список не найден» при каждом открытии (C2).
+ */
+sealed interface WishlistDetailUiState {
+    data object Loading : WishlistDetailUiState
+    data object NotFound : WishlistDetailUiState
+    data class Loaded(
+        val wishlist: WishlistEntity,
+        val wishes: List<WishEntity>,
+    ) : WishlistDetailUiState
+}
 
 class WishlistDetailViewModel(
     private val wishlistId: Long,
@@ -22,13 +43,15 @@ class WishlistDetailViewModel(
     private val syncManager: SyncManager,
     private val api: WantlyApi,
 ) : ViewModel() {
-    val wishlist: StateFlow<WishlistEntity?> =
-        repository.observeWishlist(wishlistId)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
-    val wishes: StateFlow<List<WishEntity>> =
-        repository.observeWishes(wishlistId)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val state: StateFlow<WishlistDetailUiState> =
+        combine(repository.observeWishlist(wishlistId), repository.observeWishes(wishlistId)) { w, ws ->
+            if (w == null) WishlistDetailUiState.NotFound
+            else WishlistDetailUiState.Loaded(w, ws)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            WishlistDetailUiState.Loading,
+        )
 
     /** Текущий share-token (transient — не хранится в Room). null если не shared
      *  или если ещё не загружен с сервера. */
@@ -44,16 +67,33 @@ class WishlistDetailViewModel(
     private val _isLoadingToken = MutableStateFlow(true)
     val isLoadingToken: StateFlow<Boolean> = _isLoadingToken.asStateFlow()
 
+    /** Ошибка первичной загрузки token. До фикса isLoadingToken застревал true
+     *  навсегда при ошибке, switch оставался disabled без объяснения (M5).
+     *  Теперь UI показывает текст + retry. */
+    private val _tokenLoadError = MutableStateFlow(false)
+    val tokenLoadError: StateFlow<Boolean> = _tokenLoadError.asStateFlow()
+
     init {
-        // Загружаем shareToken с сервера при открытии экрана (Room не хранит его).
-        // Используем serverId (не wishlistId — это local PK, не совпадает с backend id).
+        loadShareToken()
+    }
+
+    /** Загружает shareToken с сервера (Room не хранит его). Использует serverId
+     *  (backend id), не wishlistId (local PK). Public — для retry из диалога. */
+    fun loadShareToken() {
         viewModelScope.launch {
-            val entity = repository.observeWishlist(wishlistId).first { it != null } ?: run {
-                // Local-only список без serverId — sharing недоступен.
+            _tokenLoadError.value = false
+            _isLoadingToken.value = true
+            // Раньше тут было `.first { it != null }` — для удалённого списка оно
+            // подвисает навсегда (predicate не выполняется, flow не завершается).
+            // `.first()` берёт первое значение (включая null) — не блокируется.
+            val entity = repository.observeWishlist(wishlistId).first()
+            if (entity == null) {
                 _isLoadingToken.value = false
                 return@launch
             }
-            val serverId = entity.serverId ?: run {
+            val serverId = entity.serverId
+            if (serverId == null) {
+                // Local-only/guest список — sharing недоступен.
                 _isLoadingToken.value = false
                 return@launch
             }
@@ -63,10 +103,9 @@ class WishlistDetailViewModel(
                     _isLoadingToken.value = false
                 }
                 .onFailure {
-                    // Ошибка загрузки — НЕ разблокируем switch: мы не знаем текущий
-                    // share-state, toggle blind привёл бы к ревока активного share-link.
-                    // isLoadingToken остаётся true → switch disabled, user видит loading.
-                    // Retry доступен через re-fetch при следующем открытии экрана.
+                    // Не блокируем UI молча — даём пользователю retry (M5).
+                    _tokenLoadError.value = true
+                    _isLoadingToken.value = false
                 }
         }
     }
@@ -77,11 +116,13 @@ class WishlistDetailViewModel(
      *  При ошибке/нет serverId — increment toggleErrorCount → dialog разблокирует switch. */
     fun setShare(enabled: Boolean) {
         viewModelScope.launch {
-            val entity = wishlist.first { it != null } ?: run {
+            val entity = repository.observeWishlist(wishlistId).first()
+            if (entity == null) {
                 _toggleErrorCount.value++
                 return@launch
             }
-            val serverId = entity.serverId ?: run {
+            val serverId = entity.serverId
+            if (serverId == null) {
                 // Local-only/guest список — sharing невозможен без serverId.
                 _toggleErrorCount.value++
                 return@launch
