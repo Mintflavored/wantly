@@ -138,6 +138,22 @@ interface WishDao {
     @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1")
     suspend fun getPendingDelete(): List<WishEntity>
 
+    /**
+     * Reactive unsynced count для sync-индикатора в UI.
+     * ownerEmail IS NOT NULL — guest-only rows не считаются (они не пойдут на сервер).
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM wishes
+        WHERE synced = 0 AND pendingDelete = 0 AND ownerEmail IS NOT NULL
+        """,
+    )
+    fun observeUnsyncedCount(): Flow<Int>
+
+    /** Снимает pendingDelete (undo удаления). synced=0 → row снова visible в UI. */
+    @Query("UPDATE wishes SET pendingDelete = 0, synced = 0 WHERE id = :id")
+    suspend fun restoreDeleted(id: Long)
+
     /** Все rows с ownerEmail != null (привязаны к аккаунту). */
     @Query("SELECT * FROM wishes WHERE ownerEmail IS NOT NULL")
     suspend fun getOwned(): List<WishEntity>

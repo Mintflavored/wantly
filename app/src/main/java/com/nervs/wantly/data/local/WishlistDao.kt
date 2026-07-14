@@ -75,6 +75,22 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1")
     suspend fun getPendingDelete(): List<WishlistEntity>
 
+    /**
+     * Reactive unsynced count для sync-индикатора в UI.
+     * ownerEmail IS NOT NULL — guest-only rows не считаются (они не пойдут на сервер).
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM wishlists
+        WHERE synced = 0 AND pendingDelete = 0 AND ownerEmail IS NOT NULL
+        """,
+    )
+    fun observeUnsyncedCount(): Flow<Int>
+
+    /** Снимает pendingDelete (undo удаления). synced=0 → row снова visible в UI. */
+    @Query("UPDATE wishlists SET pendingDelete = 0, synced = 0 WHERE id = :id")
+    suspend fun restoreDeleted(id: Long)
+
     /** Все rows с ownerEmail != null (привязаны к аккаунту). */
     @Query("SELECT * FROM wishlists WHERE ownerEmail IS NOT NULL")
     suspend fun getOwned(): List<WishlistEntity>

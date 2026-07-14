@@ -12,6 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -19,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
@@ -26,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -35,6 +40,7 @@ import androidx.navigation.navArgument
 import com.nervs.wantly.R
 import com.nervs.wantly.WantlyApp
 import com.nervs.wantly.data.GuestCounter
+import com.nervs.wantly.ui.SnackbarController
 import com.nervs.wantly.ui.screens.addwish.AddWishScreen
 import com.nervs.wantly.ui.screens.auth.AuthScreen
 import com.nervs.wantly.ui.screens.home.HomeScreen
@@ -102,7 +108,25 @@ fun WantlyNavHost() {
 
     val showBottomBar = currentRoute in TABS.map { it.route }
 
+    // Общий SnackbarHost — переживает навигацию между экранами.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        SnackbarController.events.collect { msg ->
+            val result = snackbarHostState.showSnackbar(
+                message = context.getString(msg.messageRes),
+                actionLabel = msg.actionLabelRes?.let { context.getString(it) },
+                duration = msg.duration,
+            )
+            when (result) {
+                SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
+                SnackbarResult.Dismissed -> msg.onDismiss?.invoke()
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar {

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
+import com.nervs.wantly.R
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.WantlyDatabase
@@ -19,7 +20,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -63,6 +66,7 @@ class HomeViewModelTest {
         coEvery { sessionManager.email } returns flowOf(null)
         repository = WishlistRepository(db.wishlistDao(), db.wishDao(), mockk(relaxed = true), api, sessionManager)
         syncManager = SyncManager(db, api)
+        com.nervs.wantly.ui.SnackbarController.clearForTest()
     }
 
     @After
@@ -95,5 +99,81 @@ class HomeViewModelTest {
         val state = vm.state.first { it !is HomeUiState.Loading }
         assertThat(state).isInstanceOf(HomeUiState.Loaded::class.java)
         assertThat((state as HomeUiState.Loaded).wishlists).hasSize(2)
+    }
+
+    // ── Undo delete ──────────────────────────────────────────────────
+
+    @Test
+    fun `deleteWishlist marks row as pendingDelete (soft delete)`() = runTest {
+        val id = db.wishlistDao().insert(WishlistEntity(title = "Birthday", synced = false))
+
+        val vm = HomeViewModel(repository, syncManager)
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Birthday", synced = false))
+        advanceUntilIdle()
+
+        // Row не удалён физически — markDeleted поставил pendingDelete=1.
+        val row = db.wishlistDao().getById(id)
+        assertThat(row).isNull() // observeById фильтрует pendingDelete=0 → null в UI-запросе
+        // Но getPendingDelete находит tombstone:
+        assertThat(db.wishlistDao().getPendingDelete()).hasSize(1)
+    }
+
+    @Test
+    fun `restoreWishlist brings row back from soft delete`() = runTest {
+        val id = db.wishlistDao().insert(WishlistEntity(title = "Birthday", synced = false))
+
+        val vm = HomeViewModel(repository, syncManager)
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Birthday", synced = false))
+        advanceUntilIdle()
+
+        // Undo: restore через repository.
+        repository.restoreWishlist(id)
+        advanceUntilIdle()
+
+        val row = db.wishlistDao().getById(id)
+        assertThat(row).isNotNull()
+        assertThat(row!!.title).isEqualTo("Birthday")
+        assertThat(row.pendingDelete).isFalse()
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+    }
+
+    @Test
+    fun `deleteWishlist sends undo Snackbar message`() = runTest {
+        val id = db.wishlistDao().insert(WishlistEntity(title = "Birthday", synced = false))
+        val vm = HomeViewModel(repository, syncManager)
+
+        // SharedFlow(replay=0): подписчик должен быть ДО send.
+        val deferred = kotlinx.coroutines.CompletableDeferred<com.nervs.wantly.ui.SnackbarMessage>()
+        val collectJob = launch {
+            com.nervs.wantly.ui.SnackbarController.events.collect { deferred.complete(it) }
+        }
+        advanceUntilIdle() // даём подписке активироваться
+
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Birthday", synced = false))
+        advanceUntilIdle()
+
+        val msg = deferred.await()
+        assertThat(msg.actionLabelRes).isEqualTo(R.string.snackbar_action_undo)
+        collectJob.cancel()
+    }
+
+    // ── Unsynced count ───────────────────────────────────────────────
+
+    @Test
+    fun `observeUnsyncedCount counts dirty wishlists`() = runTest {
+        db.wishlistDao().insert(WishlistEntity(title = "Synced", synced = true, ownerEmail = "a@b.c"))
+        db.wishlistDao().insert(WishlistEntity(title = "Dirty", synced = false, ownerEmail = "a@b.c"))
+
+        val count = repository.observeUnsyncedCount().first()
+        assertThat(count).isEqualTo(1)
+    }
+
+    @Test
+    fun `observeUnsyncedCount ignores guest rows without ownerEmail`() = runTest {
+        // Guest rows (ownerEmail = null) не считаются — они не пойдут на сервер.
+        db.wishlistDao().insert(WishlistEntity(title = "Guest", synced = false, ownerEmail = null))
+
+        val count = repository.observeUnsyncedCount().first()
+        assertThat(count).isEqualTo(0)
     }
 }

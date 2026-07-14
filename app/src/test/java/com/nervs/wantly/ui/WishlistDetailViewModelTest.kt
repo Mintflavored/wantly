@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
+import com.nervs.wantly.R
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.WantlyDatabase
+import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.remote.dto.WishlistDto
@@ -20,7 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -66,6 +70,7 @@ class WishlistDetailViewModelTest {
         coEvery { sessionManager.email } returns flowOf(null)
         repository = WishlistRepository(db.wishlistDao(), db.wishDao(), mockk(relaxed = true), api, sessionManager)
         syncManager = SyncManager(db, api)
+        com.nervs.wantly.ui.SnackbarController.clearForTest()
     }
 
     @After
@@ -156,5 +161,53 @@ class WishlistDetailViewModelTest {
         assertThat(vm.tokenLoadError.value).isFalse()
         // API не должен был вызываться — нет serverId.
         assertThat(vm.shareToken.value).isNull()
+    }
+
+    // ── Undo delete wish ─────────────────────────────────────────────
+
+    @Test
+    fun `deleteWish soft-deletes and restoreWish brings it back`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "List", synced = false))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Toy", synced = false),
+        )
+
+        val vm = WishlistDetailViewModel(listId, repository, syncManager, api)
+        vm.deleteWish(WishEntity(id = wishId, wishlistId = listId, title = "Toy", synced = false))
+        advanceUntilIdle()
+
+        // Soft-deleted: observeByWishlist фильтрует pendingDelete=0 → пусто.
+        assertThat(db.wishDao().getPendingDelete()).hasSize(1)
+
+        // Undo.
+        repository.restoreWish(wishId)
+        advanceUntilIdle()
+
+        assertThat(db.wishDao().getById(wishId)).isNotNull()
+        assertThat(db.wishDao().getPendingDelete()).isEmpty()
+    }
+
+    @Test
+    fun `deleteWish sends undo Snackbar message`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "List", synced = false))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Toy", synced = false),
+        )
+
+        val vm = WishlistDetailViewModel(listId, repository, syncManager, api)
+
+        // SharedFlow(replay=0): подписчик должен быть ДО send.
+        val deferred = kotlinx.coroutines.CompletableDeferred<com.nervs.wantly.ui.SnackbarMessage>()
+        val collectJob = launch {
+            com.nervs.wantly.ui.SnackbarController.events.collect { deferred.complete(it) }
+        }
+        advanceUntilIdle()
+
+        vm.deleteWish(WishEntity(id = wishId, wishlistId = listId, title = "Toy", synced = false))
+        advanceUntilIdle()
+
+        val msg = deferred.await()
+        assertThat(msg.actionLabelRes).isEqualTo(R.string.snackbar_action_undo)
+        collectJob.cancel()
     }
 }

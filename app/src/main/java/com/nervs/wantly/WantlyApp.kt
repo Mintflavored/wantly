@@ -17,6 +17,7 @@ class WantlyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.networkMonitor.register()
 
         // Стартовая синхронизация: если есть сохранённый токен — тянем данные
         appScope.launch {

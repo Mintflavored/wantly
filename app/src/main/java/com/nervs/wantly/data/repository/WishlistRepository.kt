@@ -13,6 +13,7 @@ import com.nervs.wantly.data.remote.LinkPreviewService
 import com.nervs.wantly.data.remote.WantlyApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 
@@ -36,6 +37,16 @@ class WishlistRepository(
 
     fun observeWishlist(id: Long): Flow<WishlistEntity?> = wishlistDao.observeById(id)
     fun observeWishes(wishlistId: Long): Flow<List<WishEntity>> = wishDao.observeByWishlist(wishlistId)
+
+    /** Reactive общее количество unsynced rows (wishlists + wishes) для sync-индикатора. */
+    fun observeUnsyncedCount(): Flow<Int> =
+        combine(wishlistDao.observeUnsyncedCount(), wishDao.observeUnsyncedCount()) { a, b -> a + b }
+
+    /** Undo удаления wishlist: снимает pendingDelete, row снова visible. */
+    suspend fun restoreWishlist(id: Long) = wishlistDao.restoreDeleted(id)
+
+    /** Undo удаления wish: снимает pendingDelete, row снова visible. */
+    suspend fun restoreWish(id: Long) = wishDao.restoreDeleted(id)
 
     suspend fun createWishlist(title: String, description: String?, coverColor: Int): Long {
         val owner = sessionManager.email.first()
