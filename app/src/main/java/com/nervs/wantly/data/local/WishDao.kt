@@ -142,6 +142,10 @@ interface WishDao {
     @Query("UPDATE wishes SET undoProtected = 0 WHERE id = :id")
     suspend fun commitDelete(id: Long)
 
+    /** Снимает undoProtected со всех tombstones (см. WishlistDao.commitAllUndoProtected). */
+    @Query("UPDATE wishes SET undoProtected = 0 WHERE undoProtected = 1")
+    suspend fun commitAllUndoProtected()
+
     @Delete
     suspend fun delete(wish: WishEntity)
 

@@ -62,6 +62,9 @@ class SyncManager(
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
         val result = mutex.withLock {
             try {
+                // Login = user confirmed. Закрываем undo-окна (как при logout).
+                database.wishlistDao().commitAllUndoProtected()
+                database.wishDao().commitAllUndoProtected()
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
                 // Drain cycle: ловит dirty changes сделанные во время pull
@@ -83,6 +86,12 @@ class SyncManager(
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
         val ok = mutex.withLock {
+            // Startup recovery: могли остаться undoProtected tombstones после
+            // process death (Snackbar onDismiss не вызовется). Коммитим их —
+            // undo-окно уже точно закрыто, tombstone должен уйти на сервер.
+            database.wishlistDao().commitAllUndoProtected()
+            database.wishDao().commitAllUndoProtected()
+
             // Owner guard ПЕРЕД pull: если в Room есть rows, привязанные к другому
             // аккаунту (не совпадает ownerEmail), вытираем их сразу, иначе pull
             // вставит свежие серверные данные, а старый guard после pull вытер
@@ -143,6 +152,12 @@ class SyncManager(
      */
     suspend fun pushPendingVerifiedForLogout(): LogoutSyncOutcome {
         lastSyncSaw401 = false
+        // Logout = user confirmed. Закрываем все undo-окна принудительно:
+        // tombstones становятся видимыми для getPendingDelete, иначе
+        // hasUnsyncedRows() вернул бы false и logout вытер Room при
+        // unsynced deletes (сервер хранил бы удалённые элементы).
+        database.wishlistDao().commitAllUndoProtected()
+        database.wishDao().commitAllUndoProtected()
         // Ждём mutex напрямую, а не через tryLock scheduler. Если в flight
         // есть syncAfterAuth/pushPendingScoped, дождёмся завершения, потом
         // сделаем финальный push. Иначе dirty check мог бы сработать до того,

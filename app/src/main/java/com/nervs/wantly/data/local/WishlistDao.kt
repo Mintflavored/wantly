@@ -62,6 +62,15 @@ interface WishlistDao {
     suspend fun commitDelete(id: Long)
 
     /**
+     * Снимает undoProtected со ВСЕХ tombstones. Вызывается при logout
+     * (user confirmed — undo-окно закрывается принудительно) и при startup
+     * (могли остаться undoProtected tombstones после process death, когда
+     * Snackbar onDismiss никогда не вызовется).
+     */
+    @Query("UPDATE wishlists SET undoProtected = 0 WHERE undoProtected = 1")
+    suspend fun commitAllUndoProtected()
+
+    /**
      * Partial update: только редактируемые поля + synced=0 + syncError=0
      * (любое редактирование сбрасывает terminal-error и снова делает row dirty
      * для повторного sync). Не трогает serverId, createdAt, ownerEmail, isShared —
