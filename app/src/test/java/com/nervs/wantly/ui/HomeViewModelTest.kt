@@ -176,4 +176,21 @@ class HomeViewModelTest {
         val count = repository.observeUnsyncedCount().first()
         assertThat(count).isEqualTo(0)
     }
+
+    @Test
+    fun `observeUnsyncedCount includes pending-delete tombstones`() = runTest {
+        // Tombstone: synced=0, pendingDelete=1 — delete push ещё не дошёл.
+        // Сервер всё ещё содержит удалённый элемент → это несинхронизированное состояние.
+        db.wishlistDao().insert(
+            WishlistEntity(
+                title = "Deleted offline",
+                synced = false,
+                pendingDelete = true,
+                ownerEmail = "a@b.c",
+            ),
+        )
+
+        val count = repository.observeUnsyncedCount().first()
+        assertThat(count).isEqualTo(1)
+    }
 }

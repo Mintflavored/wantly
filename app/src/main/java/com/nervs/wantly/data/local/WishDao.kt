@@ -140,12 +140,14 @@ interface WishDao {
 
     /**
      * Reactive unsynced count для sync-индикатора в UI.
+     * Включает tombstones (pendingDelete=1) — если delete push ещё не дошёл,
+     * сервер всё ещё не знает об удалении → это несинхронизированное состояние.
      * ownerEmail IS NOT NULL — guest-only rows не считаются (они не пойдут на сервер).
      */
     @Query(
         """
         SELECT COUNT(*) FROM wishes
-        WHERE synced = 0 AND pendingDelete = 0 AND ownerEmail IS NOT NULL
+        WHERE synced = 0 AND ownerEmail IS NOT NULL
         """,
     )
     fun observeUnsyncedCount(): Flow<Int>
