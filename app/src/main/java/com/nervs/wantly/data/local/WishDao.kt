@@ -124,7 +124,16 @@ interface WishDao {
         expectedStatus: String,
     )
 
-    @Query("UPDATE wishes SET pendingDelete = 1, synced = 0, syncError = 0 WHERE id = :id")
+    @Query(
+        """
+        UPDATE wishes SET
+            pendingDelete = 1,
+            preDeleteSynced = synced,
+            synced = 0,
+            syncError = 0
+        WHERE id = :id
+        """,
+    )
     suspend fun markDeleted(id: Long)
 
     @Delete
@@ -155,15 +164,13 @@ interface WishDao {
     /**
      * Снимает pendingDelete (undo удаления). Row снова visible в UI.
      *
-     * synced восстанавливается в pre-delete состояние (см. WishlistDao.restoreDeleted):
-     * serverId != null → synced=1 (данные не изменились, сервер их содержит),
-     * serverId = null → synced=0 (row ещё нужно CREATE'нуть).
+     * synced восстанавливается из [preDeleteSynced] снимка (см. WishlistDao.restoreDeleted).
      */
     @Query(
         """
         UPDATE wishes SET
             pendingDelete = 0,
-            synced = CASE WHEN serverId IS NOT NULL THEN 1 ELSE 0 END
+            synced = preDeleteSynced
         WHERE id = :id
         """,
     )

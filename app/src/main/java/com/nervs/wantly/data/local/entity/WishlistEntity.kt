@@ -21,6 +21,15 @@ data class WishlistEntity(
     /** true = удалено локально, нужно отправить DELETE на сервер. */
     @ColumnInfo(name = "pendingDelete", defaultValue = "0") val pendingDelete: Boolean = false,
     /**
+     * Снимок [synced] на момент [markDeleted]. Используется [restoreDeleted]
+     * (undo удаления) для восстановления pre-delete sync state: если row был
+     * synced=1 перед delete → undo возвращает synced=1 (no-op, сервер уже имеет
+     * данные); если row был dirty (synced=0) → undo оставляет synced=0 (pending
+     * edit должен уйти на сервер). Без этого undo либо терял pending edits (P1),
+     * либо no-op PATCH перезаписывал remote changes (P2).
+     */
+    @ColumnInfo(name = "preDeleteSynced", defaultValue = "0") val preDeleteSynced: Boolean = false,
+    /**
      * Email аккаунта, которому принадлежит запись. null = guest / не привязан.
      * При login/register если в Room есть rows с ownerEmail != null и != нового
      * email → Room вытирается, иначе данные чужого аккаунта уйдут под новым токеном.

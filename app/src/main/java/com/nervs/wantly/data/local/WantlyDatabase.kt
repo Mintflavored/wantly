@@ -11,7 +11,7 @@ import com.nervs.wantly.data.local.entity.WishlistEntity
 
 @Database(
     entities = [WishlistEntity::class, WishEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class WantlyDatabase : RoomDatabase() {
@@ -90,6 +90,22 @@ abstract class WantlyDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 5→6: добавлен preDeleteSynced (BOOLEAN DEFAULT 0) на обе таблицы.
+         *
+         * Снимок synced на момент markDeleted. restoreDeleted (undo удаления)
+         * восстанавливает synced из этого снимка — иначе undo либо терял pending
+         * edits (synced=1 для already-dirty row), либо no-op PATCH перезаписывал
+         * remote changes (synced=0 для already-synced row). Существующие строки
+         * получают preDeleteSynced=0 — корректно (они не pendingDelete).
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN preDeleteSynced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN preDeleteSynced INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** Маркер в DataStore, что backfill ownerEmail после миграции выполнен. */
         const val BACKFILL_KEY = "v3_owner_backfill_done"
 
@@ -100,7 +116,7 @@ abstract class WantlyDatabase : RoomDatabase() {
                     WantlyDatabase::class.java,
                     "wantly.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { INSTANCE = it }
             }

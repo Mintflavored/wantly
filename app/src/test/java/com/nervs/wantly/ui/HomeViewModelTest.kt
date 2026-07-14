@@ -159,8 +159,30 @@ class HomeViewModelTest {
         val row = db.wishlistDao().getById(id)
         assertThat(row).isNotNull()
         assertThat(row!!.pendingDelete).isFalse()
-        // serverId != null → synced восстанавливается в 1 (данные не изменились).
+        // preDeleteSynced=1 → synced восстанавливается в 1 (данные не изменились).
         assertThat(row.synced).isTrue()
+    }
+
+    @Test
+    fun `restoreWishlist preserves dirty state for unsynced rows`() = runTest {
+        // Wishlist dirty (synced=false, serverId=42) — есть pending edit офлайн.
+        // После delete + undo synced должен остаться 0, иначе pending edit потеряется.
+        val id = db.wishlistDao().insert(
+            WishlistEntity(title = "Edited", synced = false, serverId = 42L, ownerEmail = "a@b.c"),
+        )
+
+        val vm = HomeViewModel(repository, syncManager)
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Edited", synced = false, serverId = 42L))
+        advanceUntilIdle()
+
+        repository.restoreWishlist(id)
+        advanceUntilIdle()
+
+        val row = db.wishlistDao().getById(id)
+        assertThat(row).isNotNull()
+        assertThat(row!!.pendingDelete).isFalse()
+        // preDeleteSynced=0 → synced остаётся 0 (pending edit не теряется).
+        assertThat(row.synced).isFalse()
     }
 
     @Test
