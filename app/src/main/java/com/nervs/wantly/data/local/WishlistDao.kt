@@ -89,8 +89,26 @@ interface WishlistDao {
     )
     fun observeUnsyncedCount(): Flow<Int>
 
-    /** Снимает pendingDelete (undo удаления). synced=0 → row снова visible в UI. */
-    @Query("UPDATE wishlists SET pendingDelete = 0, synced = 0 WHERE id = :id")
+    /**
+     * Снимает pendingDelete (undo удаления). Row снова visible в UI.
+     *
+     * synced восстанавливается в pre-delete состояние:
+     * - serverId != null → synced = 1 (сервер уже содержит эти данные,
+     *   undo не делает никаких изменений → row не dirty, PATCH не нужен).
+     *   Без этого restore безусловно ставил synced=0 → следующий sync
+     *   PATCHил unchanged snapshot, потенциально перезаписывая изменения
+     *   с другого устройства.
+     * - serverId = null → synced = 0 (row никогда не был на сервере,
+     *   его ещё нужно CREATE'нуть).
+     */
+    @Query(
+        """
+        UPDATE wishlists SET
+            pendingDelete = 0,
+            synced = CASE WHEN serverId IS NOT NULL THEN 1 ELSE 0 END
+        WHERE id = :id
+        """,
+    )
     suspend fun restoreDeleted(id: Long)
 
     /** Все rows с ownerEmail != null (привязаны к аккаунту). */

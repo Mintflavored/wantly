@@ -188,6 +188,27 @@ class WishlistDetailViewModelTest {
     }
 
     @Test
+    fun `restoreWish preserves synced state for server-backed rows`() = runTest {
+        val listId = db.wishlistDao().insert(WishlistEntity(title = "List", synced = true, serverId = 1L))
+        val wishId = db.wishDao().insert(
+            WishEntity(wishlistId = listId, title = "Toy", synced = true, serverId = 10L),
+        )
+
+        val vm = WishlistDetailViewModel(listId, repository, syncManager, api)
+        vm.deleteWish(WishEntity(id = wishId, wishlistId = listId, title = "Toy", synced = true, serverId = 10L))
+        advanceUntilIdle()
+
+        // Undo: synced должен вернуться в 1 (данные не изменились).
+        repository.restoreWish(wishId)
+        advanceUntilIdle()
+
+        val row = db.wishDao().getById(wishId)
+        assertThat(row).isNotNull()
+        assertThat(row!!.pendingDelete).isFalse()
+        assertThat(row.synced).isTrue()
+    }
+
+    @Test
     fun `deleteWish sends undo Snackbar message`() = runTest {
         val listId = db.wishlistDao().insert(WishlistEntity(title = "List", synced = false))
         val wishId = db.wishDao().insert(

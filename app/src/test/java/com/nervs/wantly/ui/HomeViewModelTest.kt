@@ -134,7 +134,33 @@ class HomeViewModelTest {
         assertThat(row).isNotNull()
         assertThat(row!!.title).isEqualTo("Birthday")
         assertThat(row.pendingDelete).isFalse()
+        // No serverId → synced остаётся 0 (row ещё нужно CREATE'нуть).
+        assertThat(row.synced).isFalse()
         assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+    }
+
+    @Test
+    fun `restoreWishlist preserves synced state for server-backed rows`() = runTest {
+        // Wishlist уже на сервере (synced=true, serverId=42).
+        // После delete + undo synced должен вернуться в 1, иначе следующий
+        // sync PATCHил бы unchanged snapshot, перезаписывая изменения с другого устройства.
+        val id = db.wishlistDao().insert(
+            WishlistEntity(title = "Synced List", synced = true, serverId = 42L, ownerEmail = "a@b.c"),
+        )
+
+        val vm = HomeViewModel(repository, syncManager)
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Synced List", synced = true, serverId = 42L))
+        advanceUntilIdle()
+
+        // Undo.
+        repository.restoreWishlist(id)
+        advanceUntilIdle()
+
+        val row = db.wishlistDao().getById(id)
+        assertThat(row).isNotNull()
+        assertThat(row!!.pendingDelete).isFalse()
+        // serverId != null → synced восстанавливается в 1 (данные не изменились).
+        assertThat(row.synced).isTrue()
     }
 
     @Test
