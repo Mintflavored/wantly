@@ -91,18 +91,30 @@ abstract class WantlyDatabase : RoomDatabase() {
         }
 
         /**
-         * Migration 5→6: добавлен preDeleteSynced (BOOLEAN DEFAULT 0) на обе таблицы.
+         * Migration 5→6: undo-delete support columns на обе таблицы.
          *
-         * Снимок synced на момент markDeleted. restoreDeleted (undo удаления)
-         * восстанавливает synced из этого снимка — иначе undo либо терял pending
-         * edits (synced=1 для already-dirty row), либо no-op PATCH перезаписывал
-         * remote changes (synced=0 для already-synced row). Существующие строки
-         * получают preDeleteSynced=0 — корректно (они не pendingDelete).
+         * - preDeleteSynced: снимок synced на момент markDeleted. restoreDeleted
+         *   восстанавливает synced из этого снимка — иначе undo либо терял pending
+         *   edits (synced=1 для dirty row), либо no-op PATCH перезаписывал remote
+         *   changes (synced=0 для synced row).
+         * - preDeleteSyncError: снимок syncError. markDeleted сбрасывает syncError=0
+         *   для DELETE; restoreDeleted восстанавливает из снимка, иначе undo
+         *   стирает terminal-error indicator с rejected row.
+         * - undoProtected: флаг что tombstone в undo-окне Snackbar. getPendingDelete
+         *   фильтрует undoProtected=0, чтобы фоновый pushPending не потребил
+         *   tombstone пока пользователь ещё может нажать Undo. onDismiss снимает
+         *   флаг перед push; onAction снимает при restore.
+         *
+         * Существующие строки получают все три = 0 — корректно.
          */
         private val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE wishlists ADD COLUMN preDeleteSynced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN preDeleteSyncError INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishlists ADD COLUMN undoProtected INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE wishes ADD COLUMN preDeleteSynced INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN preDeleteSyncError INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wishes ADD COLUMN undoProtected INTEGER NOT NULL DEFAULT 0")
             }
         }
 

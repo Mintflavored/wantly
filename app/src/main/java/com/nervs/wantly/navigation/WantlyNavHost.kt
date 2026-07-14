@@ -120,7 +120,7 @@ fun WantlyNavHost() {
             )
             when (result) {
                 SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
-                SnackbarResult.Dismissed -> msg.onDismiss?.invoke()
+                SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
             }
         }
     }

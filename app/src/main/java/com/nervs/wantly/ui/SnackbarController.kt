@@ -21,7 +21,7 @@ data class SnackbarMessage(
     @StringRes val messageRes: Int,
     @StringRes val actionLabelRes: Int? = null,
     val onAction: (suspend () -> Unit)? = null,
-    val onDismiss: (() -> Unit)? = null,
+    val onDismiss: (suspend () -> Unit)? = null,
     val duration: SnackbarDuration = SnackbarDuration.Short,
 )
 

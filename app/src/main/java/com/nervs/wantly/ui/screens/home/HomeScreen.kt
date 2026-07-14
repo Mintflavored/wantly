@@ -334,27 +334,22 @@ private fun DeleteWishlistDialog(
  */
 @Composable
 fun SyncStatusIndicator(isOnline: Boolean, unsyncedCount: Int) {
-    val (icon, tint, cd) = when {
-        !isOnline -> Triple(
-            Icons.Default.CloudOff,
-            MaterialTheme.colorScheme.error,
-            R.string.cd_sync_offline,
-        )
-        unsyncedCount > 0 -> Triple(
-            Icons.Default.CloudQueue,
-            MaterialTheme.colorScheme.outline,
-            R.string.cd_sync_unsynced,
-        )
-        else -> Triple(
-            Icons.Default.CloudSync,
-            MaterialTheme.colorScheme.primary,
-            R.string.cd_sync_unsynced,  // placeholder, won't show for 0
-        )
+    // Для synced-state используем отдельную строку без форматирования (P3:
+    // раньше «Не синхронизировано: 0» для чистого состояния вводило в заблуждение).
+    val description = when {
+        !isOnline -> stringResource(R.string.cd_sync_offline)
+        unsyncedCount > 0 -> stringResource(R.string.cd_sync_unsynced, unsyncedCount)
+        else -> stringResource(R.string.cd_sync_synced)
     }
-    val description = if (!isOnline) {
-        stringResource(cd)
-    } else {
-        stringResource(cd, unsyncedCount)
+    val tint = when {
+        !isOnline -> MaterialTheme.colorScheme.error
+        unsyncedCount > 0 -> MaterialTheme.colorScheme.outline
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val icon = when {
+        !isOnline -> Icons.Default.CloudOff
+        unsyncedCount > 0 -> Icons.Default.CloudQueue
+        else -> Icons.Default.CloudSync
     }
     Icon(icon, contentDescription = description, tint = tint)
 }

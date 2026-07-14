@@ -129,12 +129,18 @@ interface WishDao {
         UPDATE wishes SET
             pendingDelete = 1,
             preDeleteSynced = synced,
+            preDeleteSyncError = syncError,
+            undoProtected = 1,
             synced = 0,
             syncError = 0
         WHERE id = :id
         """,
     )
     suspend fun markDeleted(id: Long)
+
+    /** Снимает undoProtected (см. WishlistDao.commitDelete). */
+    @Query("UPDATE wishes SET undoProtected = 0 WHERE id = :id")
+    suspend fun commitDelete(id: Long)
 
     @Delete
     suspend fun delete(wish: WishEntity)
@@ -144,7 +150,7 @@ interface WishDao {
     @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 0")
     suspend fun getUnsynced(): List<WishEntity>
 
-    @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1")
+    @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1 AND undoProtected = 0")
     suspend fun getPendingDelete(): List<WishEntity>
 
     /**
@@ -163,14 +169,15 @@ interface WishDao {
 
     /**
      * Снимает pendingDelete (undo удаления). Row снова visible в UI.
-     *
-     * synced восстанавливается из [preDeleteSynced] снимка (см. WishlistDao.restoreDeleted).
+     * synced и syncError восстанавливаются из снимков (см. WishlistDao.restoreDeleted).
      */
     @Query(
         """
         UPDATE wishes SET
             pendingDelete = 0,
-            synced = preDeleteSynced
+            synced = preDeleteSynced,
+            syncError = preDeleteSyncError,
+            undoProtected = 0
         WHERE id = :id
         """,
     )

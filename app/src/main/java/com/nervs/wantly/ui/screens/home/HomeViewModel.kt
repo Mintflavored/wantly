@@ -62,7 +62,12 @@ class HomeViewModel(
                     messageRes = R.string.snackbar_list_deleted,
                     actionLabelRes = R.string.snackbar_action_undo,
                     onAction = { repository.restoreWishlist(wishlist.id) },
-                    onDismiss = { syncManager.pushPendingScoped() },
+                    onDismiss = {
+                        // Окно undo закрыто: снимаем undoProtected (tombstone
+                        // становится видимым для getPendingDelete), потом push.
+                        repository.commitWishlistDelete(wishlist.id)
+                        syncManager.pushPendingScoped()
+                    },
                     duration = SnackbarDuration.Long,
                 ),
             )

@@ -43,6 +43,10 @@ data class WishEntity(
      * Снимок [synced] на момент markDeleted (undo удаления). См. [WishlistEntity.preDeleteSynced].
      */
     @ColumnInfo(name = "preDeleteSynced", defaultValue = "0") val preDeleteSynced: Boolean = false,
+    /** Снимок [syncError] на момент markDeleted. См. [WishlistEntity.preDeleteSyncError]. */
+    @ColumnInfo(name = "preDeleteSyncError", defaultValue = "0") val preDeleteSyncError: Boolean = false,
+    /** Tombstone в undo-окне Snackbar. См. [WishlistEntity.undoProtected]. */
+    @ColumnInfo(name = "undoProtected", defaultValue = "0") val undoProtected: Boolean = false,
     /** Email аккаунта-владельца (см. [WishlistEntity.ownerEmail]). */
     @ColumnInfo(name = "ownerEmail") val ownerEmail: String? = null,
     /**

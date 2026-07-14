@@ -48,6 +48,12 @@ class WishlistRepository(
     /** Undo удаления wish: снимает pendingDelete, row снова visible. */
     suspend fun restoreWish(id: Long) = wishDao.restoreDeleted(id)
 
+    /** Снимает undoProtected — tombstone готов к sync (окно Snackbar закрыто). */
+    suspend fun commitWishlistDelete(id: Long) = wishlistDao.commitDelete(id)
+
+    /** Снимает undoProtected — tombstone готов к sync (окно Snackbar закрыто). */
+    suspend fun commitWishDelete(id: Long) = wishDao.commitDelete(id)
+
     suspend fun createWishlist(title: String, description: String?, coverColor: Int): Long {
         val owner = sessionManager.email.first()
         return wishlistDao.insert(

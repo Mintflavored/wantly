@@ -173,7 +173,10 @@ class WishlistDetailViewModel(
                     messageRes = R.string.snackbar_wish_deleted,
                     actionLabelRes = R.string.snackbar_action_undo,
                     onAction = { repository.restoreWish(wish.id) },
-                    onDismiss = { syncManager.pushPendingScoped() },
+                    onDismiss = {
+                        repository.commitWishDelete(wish.id)
+                        syncManager.pushPendingScoped()
+                    },
                     duration = SnackbarDuration.Long,
                 ),
             )

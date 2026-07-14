@@ -112,9 +112,29 @@ class HomeViewModelTest {
         advanceUntilIdle()
 
         // Row не удалён физически — markDeleted поставил pendingDelete=1.
-        val row = db.wishlistDao().getById(id)
-        assertThat(row).isNull() // observeById фильтрует pendingDelete=0 → null в UI-запросе
-        // Но getPendingDelete находит tombstone:
+        // getById фильтрует pendingDelete=0 → null.
+        assertThat(db.wishlistDao().getById(id)).isNull()
+        // getAll() без фильтров показывает реальное состояние: tombstone существует.
+        val allRows = db.wishlistDao().getAll()
+        assertThat(allRows).hasSize(1)
+        assertThat(allRows[0].pendingDelete).isTrue()
+        // undoProtected=1: tombstone скрыт от getPendingDelete пока undo-окно открыто.
+        assertThat(allRows[0].undoProtected).isTrue()
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+    }
+
+    @Test
+    fun `commitDelete exposes tombstone to getPendingDelete`() = runTest {
+        val id = db.wishlistDao().insert(WishlistEntity(title = "Birthday", synced = false))
+        val vm = HomeViewModel(repository, syncManager)
+        vm.deleteWishlist(WishlistEntity(id = id, title = "Birthday", synced = false))
+        advanceUntilIdle()
+
+        // Пока undo-окно открыто — getPendingDelete пуст (undoProtected=1).
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+
+        // Окно закрыто (onDismiss) → commitDelete снимает undoProtected.
+        repository.commitWishlistDelete(id)
         assertThat(db.wishlistDao().getPendingDelete()).hasSize(1)
     }
 

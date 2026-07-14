@@ -129,4 +129,5 @@
     <!-- Sync-индикатор -->
     <string name="cd_sync_offline">Нет подключения к интернету</string>
     <string name="cd_sync_unsynced">Не синхронизировано: %1$d</string>
+    <string name="cd_sync_synced">Всё синхронизировано</string>
 </resources>

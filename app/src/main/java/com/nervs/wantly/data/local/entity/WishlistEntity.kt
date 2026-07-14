@@ -30,6 +30,19 @@ data class WishlistEntity(
      */
     @ColumnInfo(name = "preDeleteSynced", defaultValue = "0") val preDeleteSynced: Boolean = false,
     /**
+     * Снимок [syncError] на момент [markDeleted]. restoreDeleted восстанавливает
+     * syncError из этого снимка — иначе undo стирает terminal-error indicator
+     * с rejected row (сервер отверг поля, но UI больше не показывает ошибку).
+     */
+    @ColumnInfo(name = "preDeleteSyncError", defaultValue = "0") val preDeleteSyncError: Boolean = false,
+    /**
+     * Tombstone в undo-окне Snackbar. `getPendingDelete` фильтрует undoProtected=0,
+     * чтобы фоновый pushPending не потребил tombstone пока пользователь ещё может
+     * нажать Undo. onDismiss (push-eligible) снимает флаг; onAction (undo) снимает
+     * при restore.
+     */
+    @ColumnInfo(name = "undoProtected", defaultValue = "0") val undoProtected: Boolean = false,
+    /**
      * Email аккаунта, которому принадлежит запись. null = guest / не привязан.
      * При login/register если в Room есть rows с ownerEmail != null и != нового
      * email → Room вытирается, иначе данные чужого аккаунта уйдут под новым токеном.

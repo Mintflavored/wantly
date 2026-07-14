@@ -176,8 +176,8 @@ class WishlistDetailViewModelTest {
         vm.deleteWish(WishEntity(id = wishId, wishlistId = listId, title = "Toy", synced = false))
         advanceUntilIdle()
 
-        // Soft-deleted: observeByWishlist фильтрует pendingDelete=0 → пусто.
-        assertThat(db.wishDao().getPendingDelete()).hasSize(1)
+        // Soft-deleted: getPendingDelete пуст пока undo-окно открыто (undoProtected=1).
+        assertThat(db.wishDao().getPendingDelete()).isEmpty()
 
         // Undo.
         repository.restoreWish(wishId)

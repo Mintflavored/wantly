@@ -45,12 +45,21 @@ interface WishlistDao {
         UPDATE wishlists SET
             pendingDelete = 1,
             preDeleteSynced = synced,
+            preDeleteSyncError = syncError,
+            undoProtected = 1,
             synced = 0,
             syncError = 0
         WHERE id = :id
         """,
     )
     suspend fun markDeleted(id: Long)
+
+    /**
+     * Помечает tombstone как готовый к sync (undo-окно закрыто).
+     * Снимает undoProtected → row становится видимым для getPendingDelete.
+     */
+    @Query("UPDATE wishlists SET undoProtected = 0 WHERE id = :id")
+    suspend fun commitDelete(id: Long)
 
     /**
      * Partial update: только редактируемые поля + synced=0 + syncError=0
@@ -81,7 +90,7 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 0")
     suspend fun getUnsynced(): List<WishlistEntity>
 
-    @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1")
+    @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1 AND undoProtected = 0")
     suspend fun getPendingDelete(): List<WishlistEntity>
 
     /**
@@ -101,18 +110,16 @@ interface WishlistDao {
     /**
      * Снимает pendingDelete (undo удаления). Row снова visible в UI.
      *
-     * synced восстанавливается из [preDeleteSynced] снимка, сохранённого
-     * в [markDeleted]. Это гарантирует:
-     * - already-synced row → synced=1 (no-op undo, сервер уже имеет данные,
-     *   PATCH не нужен, remote changes не перезаписываются)
-     * - already-dirty row → synced=0 (pending edit не теряется, уйдёт на
-     *   сервер при следующем sync)
+     * synced и syncError восстанавливаются из снимков (preDeleteSynced,
+     * preDeleteSyncError), сохранённых в [markDeleted]. undoProtected снимается.
      */
     @Query(
         """
         UPDATE wishlists SET
             pendingDelete = 0,
-            synced = preDeleteSynced
+            synced = preDeleteSynced,
+            syncError = preDeleteSyncError,
+            undoProtected = 0
         WHERE id = :id
         """,
     )
