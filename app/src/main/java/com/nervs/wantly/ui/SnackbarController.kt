@@ -32,14 +32,15 @@ data class SnackbarMessage(
  */
 /**
  * Singleton event-bus для передачи Snackbar-событий из любой ViewModel в общий
- * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=0 и UNLIMITED buffer —
- * события не кэшируются для новых подписчиков, но никогда не теряются при
- * переполнении (иначе undo-delete onDismiss никогда бы не вызвался →
- * undoProtected tombstone остался бы скрытым от sync навсегда).
+ * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=1 — последнее событие
+ * сохраняется для нового подписчика (если LaunchedEffect ещё не активен при
+ * Activity recreation, сообщение не теряется). extraBufferCapacity=UNLIMITED —
+ * события не теряются при переполнении (иначе undo-delete onDismiss никогда бы
+ * не вызвался → undoProtected tombstone остался бы скрытым от sync навсегда).
  */
 object SnackbarController {
     private val _events = MutableSharedFlow<SnackbarMessage>(
-        replay = 0,
+        replay = 1,
         extraBufferCapacity = Int.MAX_VALUE, // UNLIMITED — не терять undo-события
     )
     val events: SharedFlow<SnackbarMessage> = _events.asSharedFlow()

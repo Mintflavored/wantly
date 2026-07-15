@@ -172,7 +172,12 @@ class WishlistDetailViewModel(
                 SnackbarMessage(
                     messageRes = R.string.snackbar_wish_deleted,
                     actionLabelRes = R.string.snackbar_action_undo,
-                    onAction = { repository.restoreWish(wish.id) },
+                    onAction = {
+                        // restoreDeleted возвращает synced из pre-delete снимка:
+                        // dirty row (synced=0) останется dirty → планируем push.
+                        repository.restoreWish(wish.id)
+                        syncManager.pushPendingScoped()
+                    },
                     onDismiss = {
                         repository.commitWishDelete(wish.id)
                         syncManager.pushPendingScoped()

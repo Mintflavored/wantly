@@ -61,7 +61,14 @@ class HomeViewModel(
                 SnackbarMessage(
                     messageRes = R.string.snackbar_list_deleted,
                     actionLabelRes = R.string.snackbar_action_undo,
-                    onAction = { repository.restoreWishlist(wishlist.id) },
+                    onAction = {
+                        // Восстанавливаем row. restoreDeleted возвращает synced
+                        // из pre-delete снимка: если row был dirty (synced=0),
+                        // он останется dirty — нужно запланировать push, иначе
+                        // pending edit зависнет до следующего sync/logout.
+                        repository.restoreWishlist(wishlist.id)
+                        syncManager.pushPendingScoped()
+                    },
                     onDismiss = {
                         // Окно undo закрыто: снимаем undoProtected (tombstone
                         // становится видимым для getPendingDelete), потом push.
