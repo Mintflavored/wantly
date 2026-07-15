@@ -30,8 +30,18 @@ data class SnackbarMessage(
  * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=0 — события не
  * кэшируются для новых подписчиков, показываются последовательно.
  */
+/**
+ * Singleton event-bus для передачи Snackbar-событий из любой ViewModel в общий
+ * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=0 и UNLIMITED buffer —
+ * события не кэшируются для новых подписчиков, но никогда не теряются при
+ * переполнении (иначе undo-delete onDismiss никогда бы не вызвался →
+ * undoProtected tombstone остался бы скрытым от sync навсегда).
+ */
 object SnackbarController {
-    private val _events = MutableSharedFlow<SnackbarMessage>(replay = 0, extraBufferCapacity = 16)
+    private val _events = MutableSharedFlow<SnackbarMessage>(
+        replay = 0,
+        extraBufferCapacity = Int.MAX_VALUE, // UNLIMITED — не терять undo-события
+    )
     val events: SharedFlow<SnackbarMessage> = _events.asSharedFlow()
 
     fun send(message: SnackbarMessage) {
@@ -39,6 +49,7 @@ object SnackbarController {
     }
 
     /** Очищает буфер (для тестов). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun clearForTest() {
         _events.resetReplayCache()
     }

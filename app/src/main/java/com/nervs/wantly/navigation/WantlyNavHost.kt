@@ -134,7 +134,15 @@ fun WantlyNavHost() {
             }
         } finally {
             // Cancellation = treat as dismiss for the interrupted message.
-            inFlight?.onDismiss?.let { snackbarScope.launch { it() } }
+            // NonCancellable: rememberCoroutineScope сам отменяется при Activity
+            // recreation, обычный launch сюда не доживёт. onDismiss снимает
+            // undoProtected + запускает push — критично для sync-consistency.
+            val pending = inFlight
+            if (pending?.onDismiss != null) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    pending.onDismiss!!.invoke()
+                }
+            }
         }
     }
 
