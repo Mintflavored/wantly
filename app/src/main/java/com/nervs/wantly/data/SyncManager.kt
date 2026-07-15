@@ -62,9 +62,12 @@ class SyncManager(
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
         val result = mutex.withLock {
             try {
-                // Login = user confirmed. Закрываем undo-окна (как при logout).
-                database.wishlistDao().commitAllUndoProtected()
-                database.wishDao().commitAllUndoProtected()
+                // НЕ коммитим undoProtected tombstones здесь: пользователь мог
+                // удалить item и пойти логиниться, пока undo-Snackbar ещё виден.
+                // commitAllUndoProtected сделал бы tombstone видимым для push →
+                // row физически удалился бы → undo callback вызвал restore на
+                // несуществующей записи. Snackbar onDismiss / startup / logout
+                // обрабатывают commit в безопасных точках.
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
                 // Drain cycle: ловит dirty changes сделанные во время pull
