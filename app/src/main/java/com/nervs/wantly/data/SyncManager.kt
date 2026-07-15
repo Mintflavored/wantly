@@ -94,7 +94,6 @@ class SyncManager(
             // undo-окно уже точно закрыто, tombstone должен уйти на сервер.
             database.wishlistDao().commitAllUndoProtected()
             database.wishDao().commitAllUndoProtected()
-
             // Owner guard ПЕРЕД pull: если в Room есть rows, привязанные к другому
             // аккаунту (не совпадает ownerEmail), вытираем их сразу, иначе pull
             // вставит свежие серверные данные, а старый guard после pull вытер
@@ -363,6 +362,15 @@ class SyncManager(
     private suspend fun pushPendingInternal() {
         val wishDao = database.wishDao()
         val listDao = database.wishlistDao()
+
+        // 0. Recovery: коммитим undo-protected tombstones от убитого процесса
+        // (Snackbar onDismiss не успел вызваться). getPendingDelete ниже их
+        // не видит (undoProtected=1), поэтому сначала снимаем флаг. Без этого
+        // guest-удаления после process death остаются скрытыми навсегда —
+        // syncIfLoggedIn работает только для залогиненных, а pushPending
+        // вызывается при любом действии (create/edit/delete), в т.ч. для guest'ов.
+        listDao.commitAllUndoProtected()
+        wishDao.commitAllUndoProtected()
 
         // 1. DELETE: отправляем tombstones, удаляем только при успехе.
         // 404 трактуем как успех — запись уже удалена на сервере

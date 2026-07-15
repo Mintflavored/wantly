@@ -812,7 +812,7 @@ class SyncManagerTest {
     // (баг #12)
     @Test
     fun `pushPending DELETE tombstone returns 404 still clears local row`() = runTest {
-        // Сначала создаём валидный wishlist, чтобы FK не нарушался
+        // Сначала создаём валидный wishlist, чтобы FK не нарушалась
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 1, synced = true),
         )
@@ -831,6 +831,32 @@ class SyncManagerTest {
 
         // 404 проглочен, локальная запись удалена — иначе зависла бы forever
         assertThat(db.wishDao().getById(10)).isNull()
+    }
+
+    @Test
+    fun `pushPending recovers undo-protected tombstones from killed process`() = runTest {
+        // Сценарий: guest удалил wishlist, process умер до Snackbar dismiss.
+        // Tombstone остался undoProtected=1 → скрыт от getPendingDelete.
+        // После restart, pushPending (вызванный любым действием) должен
+        // закоммитить undoProtected tombstones и отправить DELETE.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(
+                id = 1,
+                title = "Guest List",
+                serverId = 42L,
+                synced = false, // markDeleted ставит synced=0
+                pendingDelete = true,
+                undoProtected = true,
+            ),
+        )
+
+        // До push: tombstone скрыт от getPendingDelete (undoProtected=1).
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+
+        sync.pushPending()
+
+        // После push: undoProtected снят, tombstone обработан, row удалён.
+        assertThat(db.wishlistDao().getAll()).isEmpty()
     }
 
     @Test
