@@ -41,6 +41,7 @@ import com.nervs.wantly.R
 import com.nervs.wantly.WantlyApp
 import com.nervs.wantly.data.GuestCounter
 import com.nervs.wantly.ui.SnackbarController
+import com.nervs.wantly.ui.SnackbarMessage
 import com.nervs.wantly.ui.screens.addwish.AddWishScreen
 import com.nervs.wantly.ui.screens.auth.AuthScreen
 import com.nervs.wantly.ui.screens.home.HomeScreen
@@ -112,16 +113,28 @@ fun WantlyNavHost() {
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
-        SnackbarController.events.collect { msg ->
-            val result = snackbarHostState.showSnackbar(
-                message = context.getString(msg.messageRes),
-                actionLabel = msg.actionLabelRes?.let { context.getString(it) },
-                duration = msg.duration,
-            )
-            when (result) {
-                SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
-                SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
+        // Track the in-flight message so that if the LaunchedEffect is cancelled
+        // (Activity recreation while showSnackbar is suspended) we still run
+        // onDismiss — otherwise undoProtected tombstones would stay hidden from
+        // sync until a full process restart.
+        var inFlight: SnackbarMessage? = null
+        try {
+            SnackbarController.events.collect { msg ->
+                inFlight = msg
+                val result = snackbarHostState.showSnackbar(
+                    message = context.getString(msg.messageRes),
+                    actionLabel = msg.actionLabelRes?.let { context.getString(it) },
+                    duration = msg.duration,
+                )
+                inFlight = null
+                when (result) {
+                    SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
+                    SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
+                }
             }
+        } finally {
+            // Cancellation = treat as dismiss for the interrupted message.
+            inFlight?.onDismiss?.let { snackbarScope.launch { it() } }
         }
     }
 
