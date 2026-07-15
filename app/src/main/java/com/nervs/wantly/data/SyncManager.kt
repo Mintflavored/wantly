@@ -139,6 +139,14 @@ class SyncManager(
      */
     private val pushPendingScheduled = AtomicBoolean(false)
 
+    /**
+     * One-time guard для recovery undo-protected tombstones. True после первого
+     * pushPending — recovery нужен только один раз при startup (process death
+     * мог оставить undoProtected tombstones). Последующие push'и во время
+     * активного undo-окна НЕ должны коммитить tombstones (иначе undo ломается).
+     */
+    private val recoveryDone = AtomicBoolean(false)
+
     /** Push через application scope — не отменяется при popBackStack. */
     fun pushPendingScoped() {
         appScope.launch { pushPending() }
@@ -177,6 +185,17 @@ class SyncManager(
     }
 
     suspend fun pushPending() {
+        // One-time startup recovery: если процесс был убит во время undo-окна
+        // (Snackbar onDismiss не успел вызваться), undoProtected tombstones
+        // остались скрытыми от getPendingDelete. Коммитим их ОДИН РАЗ при
+        // первом pushPending — последующие push'и во время активных undo-окон
+        // tombstones не трогают (CAS: recoveryDone true → skip).
+        if (recoveryDone.compareAndSet(false, true)) {
+            mutex.withLock {
+                database.wishlistDao().commitAllUndoProtected()
+                database.wishDao().commitAllUndoProtected()
+            }
+        }
         // Outer loop ловит lost-wakeup: запрос, пришедший во время нашего
         // push, видел занятый mutex, выставил флаг и ушёл. После unlock —
         // CAS: если флаг=true, атомарно сбрасываем и делаем ещё один виток
@@ -362,15 +381,6 @@ class SyncManager(
     private suspend fun pushPendingInternal() {
         val wishDao = database.wishDao()
         val listDao = database.wishlistDao()
-
-        // 0. Recovery: коммитим undo-protected tombstones от убитого процесса
-        // (Snackbar onDismiss не успел вызваться). getPendingDelete ниже их
-        // не видит (undoProtected=1), поэтому сначала снимаем флаг. Без этого
-        // guest-удаления после process death остаются скрытыми навсегда —
-        // syncIfLoggedIn работает только для залогиненных, а pushPending
-        // вызывается при любом действии (create/edit/delete), в т.ч. для guest'ов.
-        listDao.commitAllUndoProtected()
-        wishDao.commitAllUndoProtected()
 
         // 1. DELETE: отправляем tombstones, удаляем только при успехе.
         // 404 трактуем как успех — запись уже удалена на сервере

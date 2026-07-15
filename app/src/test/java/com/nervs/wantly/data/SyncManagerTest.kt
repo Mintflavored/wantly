@@ -860,6 +860,29 @@ class SyncManagerTest {
     }
 
     @Test
+    fun `second pushPending does not commit undo-protected tombstones`() = runTest {
+        // Recovery должен сработать ОДИН РАЗ. Второй pushPending (например,
+        // когда user удалил item и редактирует другой во время undo-окна)
+        // НЕ должен коммитить undoProtected tombstones — иначе undo ломается.
+        db.wishlistDao().insertWithId(
+            WishlistEntity(id = 1, title = "Synced", serverId = 1, synced = true),
+        )
+        sync.pushPending() // первый push → recoveryDone=true
+
+        // Теперь user удаляет wishlist (undo-окно активно, undoProtected=1).
+        db.wishlistDao().markDeleted(1)
+        assertThat(db.wishlistDao().getAll().first().undoProtected).isTrue()
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty() // скрыт
+
+        // Второй push: НЕ должен коммитить undoProtected.
+        sync.pushPending()
+
+        // Tombstone всё ещё undoProtected=1 → скрыт, undo работает.
+        assertThat(db.wishlistDao().getPendingDelete()).isEmpty()
+        assertThat(db.wishlistDao().getAll()).isNotEmpty()
+    }
+
+    @Test
     fun `pushPending PATCH 404 detaches serverId for recreation`() = runTest {
         // Wish с serverId, которого нет на сервере (другой клиент удалил).
         // PATCH вернёт 404 → wish отсоединяется, планируется retry pass,
