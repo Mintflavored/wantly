@@ -2,6 +2,7 @@ package com.nervs.wantly.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -47,6 +48,30 @@ object SnackbarController {
 
     fun send(message: SnackbarMessage) {
         _events.tryEmit(message)
+    }
+
+    /**
+     * Reference на активный SnackbarHostState — устанавливается из WantlyNavHost.
+     * Используется [dismissActive] для принудительного закрытия Snackbar (logout).
+     */
+    @Volatile
+    private var activeHost: SnackbarHostState? = null
+
+    fun bindHost(host: SnackbarHostState) {
+        activeHost = host
+    }
+
+    /**
+     * Принудительно закрывает активный Snackbar (если есть) и очищает replay.
+     * Вызывается при logout — pushPendingVerifiedForLogout коммитит tombstones,
+     * но Snackbar с Undo остаётся видимым → user может нажать Undo на уже
+     * удалённой записи.
+     */
+    fun dismissActive() {
+        activeHost?.let { host ->
+            host.currentSnackbarData?.dismiss()
+        }
+        clearHandled()
     }
 
     /** Очищает replay cache — вызывается после обработки Snackbar, чтобы

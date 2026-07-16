@@ -112,7 +112,11 @@ fun WantlyNavHost() {
     // Общий SnackbarHost — переживает навигацию между экранами.
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
-        LaunchedEffect(Unit) {
+    // Привязываем host к SnackbarController — позволяет dismissActive() из logout.
+    LaunchedEffect(snackbarHostState) {
+        SnackbarController.bindHost(snackbarHostState)
+    }
+    LaunchedEffect(Unit) {
             // Track the in-flight message so that if the LaunchedEffect is cancelled
             // (Activity recreation while showSnackbar is suspended) we still run
             // onDismiss — otherwise undoProtected tombstones would stay hidden from
@@ -147,6 +151,9 @@ fun WantlyNavHost() {
                     pending.onDismiss!!.invoke()
                 }
             }
+            // Очищаем replay cache — иначе Activity recreation получит тот же
+            // Snackbar снова (replay=1) для уже committed/pushed tombstone.
+            SnackbarController.clearHandled()
         }
     }
 
