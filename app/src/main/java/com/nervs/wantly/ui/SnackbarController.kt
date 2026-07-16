@@ -49,9 +49,13 @@ object SnackbarController {
         _events.tryEmit(message)
     }
 
-    /** Очищает буфер (для тестов). */
+    /** Очищает replay cache — вызывается после обработки Snackbar, чтобы
+     *  Activity recreation не получил уже показанный Snackbar снова. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun clearForTest() {
+    fun clearHandled() {
         _events.resetReplayCache()
     }
+
+    /** Очищает буфер (для тестов). */
+    fun clearForTest() = clearHandled()
 }

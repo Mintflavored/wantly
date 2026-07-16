@@ -112,26 +112,30 @@ fun WantlyNavHost() {
     // Общий SnackbarHost — переживает навигацию между экранами.
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
-    LaunchedEffect(Unit) {
-        // Track the in-flight message so that if the LaunchedEffect is cancelled
-        // (Activity recreation while showSnackbar is suspended) we still run
-        // onDismiss — otherwise undoProtected tombstones would stay hidden from
-        // sync until a full process restart.
-        var inFlight: SnackbarMessage? = null
-        try {
-            SnackbarController.events.collect { msg ->
-                inFlight = msg
-                val result = snackbarHostState.showSnackbar(
-                    message = context.getString(msg.messageRes),
-                    actionLabel = msg.actionLabelRes?.let { context.getString(it) },
-                    duration = msg.duration,
-                )
-                inFlight = null
-                when (result) {
-                    SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
-                    SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
+        LaunchedEffect(Unit) {
+            // Track the in-flight message so that if the LaunchedEffect is cancelled
+            // (Activity recreation while showSnackbar is suspended) we still run
+            // onDismiss — otherwise undoProtected tombstones would stay hidden from
+            // sync until a full process restart.
+            var inFlight: SnackbarMessage? = null
+            try {
+                SnackbarController.events.collect { msg ->
+                    inFlight = msg
+                    val result = snackbarHostState.showSnackbar(
+                        message = context.getString(msg.messageRes),
+                        actionLabel = msg.actionLabelRes?.let { context.getString(it) },
+                        duration = msg.duration,
+                    )
+                    inFlight = null
+                    // Очищаем replay cache после обработки — иначе Activity
+                    // recreation получит этот же Snackbar снова (replay=1) и
+                    // повторит stale onAction/onDismiss callbacks.
+                    SnackbarController.clearHandled()
+                    when (result) {
+                        SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
+                        SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
+                    }
                 }
-            }
         } finally {
             // Cancellation = treat as dismiss for the interrupted message.
             // NonCancellable: rememberCoroutineScope сам отменяется при Activity
