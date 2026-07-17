@@ -150,10 +150,13 @@ fun WantlyNavHost() {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     pending.onDismiss!!.invoke()
                 }
+                // Очищаем replay ТОЛЬКО для прерванного сообщения — иначе
+                // Activity recreation получит его снова (replay=1) для уже
+                // committed tombstone. Не очищаем если inFlight == null
+                // (нормальный path: clearHandled уже вызвался после showSnackbar,
+                // а в буфере может быть queued второе сообщение для нового collector'а).
+                SnackbarController.clearHandled()
             }
-            // Очищаем replay cache — иначе Activity recreation получит тот же
-            // Snackbar снова (replay=1) для уже committed/pushed tombstone.
-            SnackbarController.clearHandled()
         }
     }
 

@@ -66,6 +66,9 @@ class AuthViewModel(
             try {
                 val r = repository.api.register(st.email.trim(), st.password, st.displayName.ifBlank { null })
                 guardAgainstForeignRows(r.email)
+                // Закрываем активный undo-Snackbar (если гость удалил item
+                // перед регистрацией) — его onDismiss снимет undoProtected.
+                com.nervs.wantly.ui.SnackbarController.dismissActive()
                 // Привязываем все guest-rows (включая legacy без ownerEmail,
                 // если guard их не вытер) к этому аккаунту.
                 syncManager.claimGuestRows(r.email)
@@ -88,6 +91,7 @@ class AuthViewModel(
             try {
                 val r = repository.api.login(st.email.trim(), st.password)
                 guardAgainstForeignRows(r.email)
+                com.nervs.wantly.ui.SnackbarController.dismissActive()
                 syncManager.claimGuestRows(r.email)
                 sessionManager.saveSession(r.token, r.refreshToken, r.userId, r.email, r.displayName)
                 update { copy(isLoading = false, isSuccess = true) }

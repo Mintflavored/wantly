@@ -306,14 +306,14 @@ class SyncManager(
      */
     suspend fun claimGuestRows(email: String) {
         mutex.withLock {
-            // Login подтверждает intent. Гость не мог одновременно нажать Undo
-            // (Snackbar ещё не показан после login navigation). Коммитим
-            // undoProtected tombstones, оставшиеся от убитого процесса — иначе
-            // claimGuestRows привяжет их к аккаунту, а syncAfterAuth (по P1 r8
-            // фиксу) не коммитит undoProtected → tombstone скрыт от
-            // getPendingDelete до следующего logout/logged-in restart.
-            database.wishlistDao().commitAllUndoProtected()
-            database.wishDao().commitAllUndoProtected()
+            // НЕ коммитим undoProtected здесь: claimGuestRows вызывается из
+            // AuthViewModel после login. Если гость только что удалил item и
+            // Snackbar ещё активен, commit выставил бы tombstone для sync,
+            // который физически удалил бы row до того, как user успеет нажать
+            // Undo. Snackbar dismiss (вызванный из AuthViewModel через
+            // SnackbarController.dismissActive() перед claimGuestRows) обрабатывает
+            // активные undo-окна; stale tombstones от убитого процесса
+            // обрабатываются в syncIfLoggedIn (logged-in startup) или logout.
             database.wishlistDao().claimGuestRows(email)
             database.wishDao().claimGuestRows(email)
         }
