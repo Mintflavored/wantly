@@ -5,6 +5,8 @@ import com.nervs.wantly.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -31,6 +33,17 @@ class WantlyApp : Application() {
 
             val loggedIn = container.sessionManager.isLoggedIn.first()
             container.syncManager.syncIfLoggedIn(loggedIn)
+
+            // Auto-sync когда сеть восстановилась: NetworkMonitor обновляет isOnline
+            // при переходе оффлайн→онлайн. StateFlow уже делает distinctUntilChanged
+            // (operator fusion). Если есть unsynced rows — pushPending немедленно
+            // отправляет их без ожидания следующего действия пользователя.
+            container.networkMonitor.isOnline
+                .filter { it } // только переходы в онлайн
+                .drop(1) // пропускаем initial true (syncIfLoggedIn уже отработал)
+                .collect {
+                    runCatching { container.syncManager.pushPending() }
+                }
         }
     }
 }
