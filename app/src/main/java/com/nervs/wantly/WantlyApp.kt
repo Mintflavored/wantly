@@ -37,15 +37,15 @@ class WantlyApp : Application() {
             // Auto-sync когда сеть восстановилась: NetworkMonitor обновляет isOnline
             // при переходе оффлайн→онлайн. drop(1) пропускает initial emission
             // StateFlow (syncIfLoggedIn выше уже отработал), filter оставляет
-            // только online. syncIfLoggedIn ретраит ПОЛНЫЙ sync (pull + push),
-            // а не только push — иначе server-only данные не подтянутся.
+            // только online. syncOnReconnect делает pull+push БЕЗ startup guard —
+            // срабатывает при каждом reconnect, даже после успешного startup sync.
             container.networkMonitor.isOnline
                 .drop(1) // пропускаем initial emission
                 .filter { it } // только переходы в онлайн
                 .collect {
                     runCatching {
                         val stillLoggedIn = container.sessionManager.isLoggedIn.first()
-                        container.syncManager.syncIfLoggedIn(stillLoggedIn)
+                        container.syncManager.syncOnReconnect(stillLoggedIn)
                     }
                 }
         }
