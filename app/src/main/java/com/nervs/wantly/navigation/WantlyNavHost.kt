@@ -138,9 +138,12 @@ fun WantlyNavHost() {
                     // его при replay. НЕ сбрасываем весь cache (queued сообщения
                     // сохраняются для нового collector'а).
                     SnackbarController.markHandled(msg)
+                    // ВАЖНО: markHandled ПЕРЕД callback. Если callback упадёт или
+                    // composition отменится во время выполнения — сообщение уже
+                    // помечено, повторного показа не будет.
                     when (result) {
-                        SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
-                        SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
+                        SnackbarResult.ActionPerformed -> msg.onAction?.let { SnackbarController.launchCallback(it) }
+                        SnackbarResult.Dismissed -> msg.onDismiss?.let { SnackbarController.launchCallback(it) }
                     }
                 }
         } finally {

@@ -3,9 +3,13 @@ package com.nervs.wantly.ui
 import androidx.annotation.StringRes
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -50,6 +54,14 @@ object SnackbarController {
      *  целиком — это позволило бы потерять queued сообщения. */
     private val handled = ConcurrentHashMap.newKeySet<SnackbarMessage>()
 
+    /**
+     * App-scoped CoroutineScope для запуска snackbar callbacks. В отличие от
+     * rememberCoroutineScope (отменяется при composition dispose), этот scope
+     * переживает Activity recreation и навигацию — onAction/onDismiss гарантированно
+     * выполняются. Устанавливается из WantlyApp.onCreate.
+     */
+    private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     fun send(message: SnackbarMessage) {
         handled.remove(message) // новое сообщение → точно не handled
         _events.tryEmit(message)
@@ -64,6 +76,15 @@ object SnackbarController {
     fun isHandled(message: SnackbarMessage): Boolean = handled.contains(message)
 
     /**
+     * Запускает callback в app-scoped CoroutineScope (переживает composition dispose).
+     * Заменяет rememberCoroutineScope.launch — который отменяется вместе с composition
+     * при Activity recreation, оставляя onAction/onDismiss невыполненными.
+     */
+    fun launchCallback(callback: suspend () -> Unit) {
+        callbackScope.launch { callback() }
+    }
+
+    /**
      * Reference на активный SnackbarHostState — устанавливается из WantlyNavHost.
      * Используется [dismissActive] для принудительного закрытия Snackbar (logout).
      */
@@ -75,14 +96,31 @@ object SnackbarController {
     }
 
     /**
-     * Принудительно закрывает активный Snackbar (если есть). НЕ сбрасывает
-     * replay cache целиком — это теряло бы queued undo messages. Текущий
-     * in-flight message помечается handled отдельно через [markHandled].
+     * Принудительно закрывает активный Snackbar (если есть) И дрейнит queued
+     * undo messages. Вызывается при logout — pushPendingVerifiedForLogout коммитит
+     * tombstones, а несколько queued undo snackbars остались бы показываться
+     * после удаления данных, предлагая Undo который ничего не восстанавливает.
+     *
+     * Текущий in-flight message: dismiss → его onDismiss выполнится через showSnackbar
+     * return в WantlyNavHost collector'е.
+     * Queued buffered messages: помечаются handled → collector пропустит их.
      */
     fun dismissActive() {
         activeHost?.let { host ->
             host.currentSnackbarData?.dismiss()
         }
+        // Дрейним queued messages — помечаем все как handled.
+        // replay cache НЕ сбрасываем (collector проверит handled-set и пропустит).
+        // Это безопасно: после logout composition всё равно dispose'нется.
+        drainQueued()
+    }
+
+    /** Помечает все unhandled сообщения как handled — они не покажутся снова.
+     *  После logout данные вытираются → queued undo не имеет смысла. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun drainQueued() {
+        handled.clear()
+        _events.resetReplayCache()
     }
 
     /** Очищает replay cache (для тестов). */

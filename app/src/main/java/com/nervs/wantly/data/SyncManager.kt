@@ -85,6 +85,12 @@ class SyncManager(
         return result
     }
 
+    /** Стартовая синхронизация с результатом (для conditional reconnect setup). */
+    suspend fun syncIfLoggedInForResult(isLoggedIn: Boolean): Boolean {
+        syncIfLoggedIn(isLoggedIn)
+        return startupSyncDone
+    }
+
     /** Стартовая синхронизация — один раз, и только при успехе. */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
