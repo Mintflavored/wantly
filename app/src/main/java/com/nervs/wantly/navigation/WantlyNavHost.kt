@@ -124,6 +124,9 @@ fun WantlyNavHost() {
             var inFlight: SnackbarMessage? = null
             try {
                 SnackbarController.events.collect { msg ->
+                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом
+                    // (replay cache может содержать их после Activity recreation).
+                    if (SnackbarController.isHandled(msg)) return@collect
                     inFlight = msg
                     val result = snackbarHostState.showSnackbar(
                         message = context.getString(msg.messageRes),
@@ -131,10 +134,10 @@ fun WantlyNavHost() {
                         duration = msg.duration,
                     )
                     inFlight = null
-                    // Очищаем replay cache после обработки — иначе Activity
-                    // recreation получит этот же Snackbar снова (replay=1) и
-                    // повторит stale onAction/onDismiss callbacks.
-                    SnackbarController.clearHandled()
+                    // Помечаем как обработанное — Activity recreation пропустит
+                    // его при replay. НЕ сбрасываем весь cache (queued сообщения
+                    // сохраняются для нового collector'а).
+                    SnackbarController.markHandled(msg)
                     when (result) {
                         SnackbarResult.ActionPerformed -> msg.onAction?.let { snackbarScope.launch { it() } }
                         SnackbarResult.Dismissed -> msg.onDismiss?.let { snackbarScope.launch { it() } }
@@ -150,12 +153,8 @@ fun WantlyNavHost() {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     pending.onDismiss!!.invoke()
                 }
-                // Очищаем replay ТОЛЬКО для прерванного сообщения — иначе
-                // Activity recreation получит его снова (replay=1) для уже
-                // committed tombstone. Не очищаем если inFlight == null
-                // (нормальный path: clearHandled уже вызвался после showSnackbar,
-                // а в буфере может быть queued второе сообщение для нового collector'а).
-                SnackbarController.clearHandled()
+                // Помечаем как обработанное — replay не покажет его снова.
+                SnackbarController.markHandled(pending)
             }
         }
     }

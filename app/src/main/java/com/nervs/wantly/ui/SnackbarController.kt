@@ -6,6 +6,7 @@ import androidx.compose.material3.SnackbarHostState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Одно сообщение для Snackbar — эмитится из ViewModel, обрабатывается в UI.
@@ -28,18 +29,15 @@ data class SnackbarMessage(
 
 /**
  * Singleton event-bus для передачи Snackbar-событий из любой ViewModel в общий
- * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=0 — события не
- * кэшируются для новых подписчиков, показываются последовательно.
- */
-/**
- * Singleton event-bus для передачи Snackbar-событий из любой ViewModel в общий
  * SnackbarHost (WantlyNavHost). MutableSharedFlow с replay=8 — до 8 событий
  * сохраняются для нового подписчика (Activity recreation, LaunchedEffect ещё
  * не активен). extraBufferCapacity=UNLIMITED — события не теряются при burst.
  *
- * replay=8 покрывает реалистичный сценарий: user удалил несколько items перед
- * Activity recreation. Каждое undo-событие должно дойти до collector'а, иначе
- * onDismiss не выполнится и undoProtected tombstone останется скрытым навсегда.
+ * Гарантия доставки callback'ов (onAction/onDismiss) обеспечивается через
+ * [handled] set: после обработки сообщение помечается, и при replay collector
+ * пропускает его. Если Activity recreation прерывает showSnackbar — onDismiss
+ * выполняется в finally, сообщение помечается handled, replay cache НЕ
+ * сбрасывается целиком (queued сообщения сохраняются для нового collector'а).
  */
 object SnackbarController {
     private val _events = MutableSharedFlow<SnackbarMessage>(
@@ -48,9 +46,22 @@ object SnackbarController {
     )
     val events: SharedFlow<SnackbarMessage> = _events.asSharedFlow()
 
+    /** Сообщения, чьи callbacks уже выполнены. Replay cache НЕ сбрасывается
+     *  целиком — это позволило бы потерять queued сообщения. */
+    private val handled = ConcurrentHashMap.newKeySet<SnackbarMessage>()
+
     fun send(message: SnackbarMessage) {
+        handled.remove(message) // новое сообщение → точно не handled
         _events.tryEmit(message)
     }
+
+    /** Collector вызывает после обработки — помечает как выполненное. */
+    fun markHandled(message: SnackbarMessage) {
+        handled.add(message)
+    }
+
+    /** Collector вызывает чтобы проверить, нужно ли пропустить сообщение. */
+    fun isHandled(message: SnackbarMessage): Boolean = handled.contains(message)
 
     /**
      * Reference на активный SnackbarHostState — устанавливается из WantlyNavHost.
@@ -64,25 +75,20 @@ object SnackbarController {
     }
 
     /**
-     * Принудительно закрывает активный Snackbar (если есть) и очищает replay.
-     * Вызывается при logout — pushPendingVerifiedForLogout коммитит tombstones,
-     * но Snackbar с Undo остаётся видимым → user может нажать Undo на уже
-     * удалённой записи.
+     * Принудительно закрывает активный Snackbar (если есть). НЕ сбрасывает
+     * replay cache целиком — это теряло бы queued undo messages. Текущий
+     * in-flight message помечается handled отдельно через [markHandled].
      */
     fun dismissActive() {
         activeHost?.let { host ->
             host.currentSnackbarData?.dismiss()
         }
-        clearHandled()
     }
 
-    /** Очищает replay cache — вызывается после обработки Snackbar, чтобы
-     *  Activity recreation не получил уже показанный Snackbar снова. */
+    /** Очищает replay cache (для тестов). */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun clearHandled() {
+    fun clearForTest() {
+        handled.clear()
         _events.resetReplayCache()
     }
-
-    /** Очищает буфер (для тестов). */
-    fun clearForTest() = clearHandled()
 }
