@@ -28,9 +28,12 @@ class NetworkMonitor(context: Context) {
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) {
-            _isOnline.value = true
-        }
+        // НЕ override onAvailable: он срабатывает ДО validation. Раннее true
+        // заставляло WantlyApp запустить reconnect sync до реального интернет-
+        // соединения, и onCapabilitiesChanged(...VALIDATED) потом не эмитил
+        // повторное true (StateFlow дедуплицирует) → sync не ретраился.
+        // online статус определяется только в onCapabilitiesChanged (с проверкой
+        // VALIDATED) и onLost.
 
         override fun onLost(network: Network) {
             // onLost вызывается при потере одной сети, но может остаться другая.

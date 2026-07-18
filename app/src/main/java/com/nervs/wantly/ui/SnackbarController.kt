@@ -58,9 +58,10 @@ object SnackbarController {
      * App-scoped CoroutineScope для запуска snackbar callbacks. В отличие от
      * rememberCoroutineScope (отменяется при composition dispose), этот scope
      * переживает Activity recreation и навигацию — onAction/onDismiss гарантированно
-     * выполняются. Устанавливается из WantlyApp.onCreate.
+     * выполняются. Main dispatcher: callbacks могут включать NavController.navigate
+     * (sync-error action → onWishlistClick), который требует main thread.
      */
-    private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun send(message: SnackbarMessage) {
         handled.remove(message) // новое сообщение → точно не handled
