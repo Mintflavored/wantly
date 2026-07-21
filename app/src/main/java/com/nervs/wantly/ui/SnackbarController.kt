@@ -57,6 +57,12 @@ object SnackbarController {
      *  целиком — это позволило бы потерять queued сообщения. */
     private val handled = ConcurrentHashMap.newKeySet<SnackbarMessage>()
 
+    /** Tracking всех pending (не handled) messages — для drain при logout/auth.
+     *  replayCache покрывает только 8, но extraBufferCapacity=UNLIMITED хранит
+     *  больше. Этот queue позволяет dismissActive пометить ВСЕ pending messages
+     *  как handled, даже если они вне replayCache. */
+    private val pending = java.util.concurrent.ConcurrentLinkedQueue<SnackbarMessage>()
+
     /**
      * App-scoped CoroutineScope для запуска snackbar callbacks. В отличие от
      * rememberCoroutineScope (отменяется при composition dispose), этот scope
@@ -68,6 +74,7 @@ object SnackbarController {
 
     fun send(message: SnackbarMessage) {
         handled.remove(message) // новое сообщение → точно не handled
+        pending.add(message) // отслеживаем для dismissActive drain
         _events.tryEmit(message)
     }
 
@@ -76,9 +83,8 @@ object SnackbarController {
      *  без eviction memory leak на lifetime of process). */
     fun markHandled(message: SnackbarMessage) {
         handled.add(message)
+        pending.remove(message)
         if (handled.size > MAX_HANDLED) {
-            // Превышен лимит — очищаем весь set. Сообщения старые (replay=8),
-            // они уже не покажутся повторно. Лёгкая eviction без ordered queue.
             handled.clear()
         }
     }
@@ -107,27 +113,32 @@ object SnackbarController {
     }
 
     /**
-     * Принудительно закрывает активный Snackbar (если есть) И дрейнит queued
-     * undo messages. Вызывается при logout — pushPendingVerifiedForLogout коммитит
-     * tombstones, а несколько queued undo snackbars остались бы показываться
-     * после удаления данных, предлагая Undo который ничего не восстанавливает.
+     * Принудительно закрывает активный Snackbar (если есть) И дрейнит ВСЕ
+     * pending messages (не только replayCache — extraBufferCapacity=UNLIMITED
+     * может хранить больше 8). Вызывается при logout/auth — после очистки данных
+     * queued undo snackbars не должны показываться.
      *
-     * Помечает все replayed messages как handled — collector пропустит их
-     * по isHandled проверке. replay cache НЕ сбрасывается (это позволило бы
-     * future events потеряться если collector подписан).
+     * Для каждого pending message: помечаем handled (collector пропустит) +
+     * запускаем onDismiss (tombstone коммитится).
      */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun dismissActive() {
         activeHost?.let { host ->
             host.currentSnackbarData?.dismiss()
         }
-        // Помечаем все replayed messages как handled — collector пропустит их.
-        // НЕ сбрасываем replay cache целиком — это race-safe через handled-set.
-        _events.replayCache.forEach { msg ->
+        // Дрейним ВСЕ pending messages — не только replayCache.
+        // pending queue отслеживает все отправленные but not handled messages.
+        while (true) {
+            val msg = pending.poll() ?: break
             handled.add(msg)
-            // Запускаем onDismiss для каждого — tombstone коммитится.
             msg.onDismiss?.let { callbackScope.launch { it() } }
         }
+        // Сбрасываем replay cache — collector при следующем collect ничего
+        // не получит из кэша (pending пуст, handled-set покрывает всё).
+        resetReplayCacheInternal()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun resetReplayCacheInternal() {
         _events.resetReplayCache()
     }
 
@@ -135,6 +146,7 @@ object SnackbarController {
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun clearForTest() {
         handled.clear()
+        pending.clear()
         _events.resetReplayCache()
     }
 }
