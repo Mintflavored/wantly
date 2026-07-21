@@ -140,18 +140,15 @@ fun WantlyNavHost() {
                     }
                 }
         } finally {
-            // Cancellation = treat as dismiss for the interrupted message.
-            // NonCancellable: rememberCoroutineScope сам отменяется при Activity
-            // recreation, обычный launch сюда не доживёт. onDismiss снимает
-            // undoProtected + запускает push — критично для sync-consistency.
-            val pending = inFlight
-            if (pending?.onDismiss != null) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                    pending.onDismiss!!.invoke()
-                }
-                // Помечаем как обработанное — replay не покажет его снова.
-                SnackbarController.markHandled(pending)
-            }
+            // При cancellation (Activity recreation) НЕ запускаем onDismiss
+            // и НЕ помечаем handled — replay покажет Snackbar снова после
+            // recreation, user сможет нажать Undo. Раньше onDismiss коммитил
+            // tombstone преждевременно при rotation, лишая undo opportunity.
+            //
+            // Stale tombstones от process death (Snackbar onDismiss никогда
+            // не выполнится) восстанавливаются через syncIfLoggedIn recovery
+            // (commitAllUndoProtected при logged-in startup) или logout.
+            // inFlight НЕ помечаем handled — новый collector получит его из replay.
         }
     }
 
