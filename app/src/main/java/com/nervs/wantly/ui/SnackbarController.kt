@@ -80,12 +80,17 @@ object SnackbarController {
 
     /** Collector вызывает после обработки — помечает как выполненное.
      *  При превышении MAX_HANDLED очищаем старые (lambdas capture ViewModels —
-     *  без eviction memory leak на lifetime of process). */
+     *  без eviction memory leak на lifetime of process). Вместо простого clear,
+     *  оставляем только те что в replayCache (они могут прийти новому collector'у
+     *  при Activity recreation — должны остаться handled). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun markHandled(message: SnackbarMessage) {
         handled.add(message)
         pending.remove(message)
         if (handled.size > MAX_HANDLED) {
-            handled.clear()
+            // Сохраняем только replayCache entries (могут прийти при recreation).
+            val replayed = _events.replayCache.toSet()
+            handled.retainAll(replayed)
         }
     }
 
