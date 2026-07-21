@@ -117,16 +117,19 @@ fun WantlyNavHost() {
         SnackbarController.bindHost(snackbarHostState)
     }
     LaunchedEffect(Unit) {
-            // Track the in-flight message so that if the LaunchedEffect is cancelled
-            // (Activity recreation while showSnackbar is suspended) we still run
-            // onDismiss — otherwise undoProtected tombstones would stay hidden from
-            // sync until a full process restart.
             var inFlight: SnackbarMessage? = null
+            // Epoch при старте collect. Если drainQueued изменил epoch (logout),
+            // buffered messages от старого epoch пропускаются.
+            var startEpoch = SnackbarController.currentEpoch()
             try {
                 SnackbarController.events.collect { msg ->
                     // Пропускаем сообщения, уже обработанные предыдущим collector'ом
-                    // (replay cache может содержать их после Activity recreation).
-                    if (SnackbarController.isHandled(msg)) return@collect
+                    // или от drain'нутого буфера (logout).
+                    val currentEpoch = SnackbarController.currentEpoch()
+                    if (SnackbarController.isHandled(msg) || currentEpoch != startEpoch) {
+                        startEpoch = currentEpoch // синхронизируемся с новым epoch
+                        return@collect
+                    }
                     inFlight = msg
                     val result = snackbarHostState.showSnackbar(
                         message = context.getString(msg.messageRes),
@@ -138,9 +141,6 @@ fun WantlyNavHost() {
                     // его при replay. НЕ сбрасываем весь cache (queued сообщения
                     // сохраняются для нового collector'а).
                     SnackbarController.markHandled(msg)
-                    // ВАЖНО: markHandled ПЕРЕД callback. Если callback упадёт или
-                    // composition отменится во время выполнения — сообщение уже
-                    // помечено, повторного показа не будет.
                     when (result) {
                         SnackbarResult.ActionPerformed -> msg.onAction?.let { SnackbarController.launchCallback(it) }
                         SnackbarResult.Dismissed -> msg.onDismiss?.let { SnackbarController.launchCallback(it) }

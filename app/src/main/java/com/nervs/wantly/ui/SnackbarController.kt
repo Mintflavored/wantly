@@ -44,6 +44,9 @@ data class SnackbarMessage(
  * сбрасывается целиком (queued сообщения сохраняются для нового collector'а).
  */
 object SnackbarController {
+    /** Лимит для handled-set. Превышение → clear() (lambdas capture ViewModels). */
+    private const val MAX_HANDLED = 32
+
     private val _events = MutableSharedFlow<SnackbarMessage>(
         replay = 8,
         extraBufferCapacity = Int.MAX_VALUE,
@@ -68,9 +71,16 @@ object SnackbarController {
         _events.tryEmit(message)
     }
 
-    /** Collector вызывает после обработки — помечает как выполненное. */
+    /** Collector вызывает после обработки — помечает как выполненное.
+     *  При превышении MAX_HANDLED очищаем старые (lambdas capture ViewModels —
+     *  без eviction memory leak на lifetime of process). */
     fun markHandled(message: SnackbarMessage) {
         handled.add(message)
+        if (handled.size > MAX_HANDLED) {
+            // Превышен лимит — очищаем весь set. Сообщения старые (replay=8),
+            // они уже не покажутся повторно. Лёгкая eviction без ordered queue.
+            handled.clear()
+        }
     }
 
     /** Collector вызывает чтобы проверить, нужно ли пропустить сообщение. */
@@ -104,25 +114,36 @@ object SnackbarController {
      *
      * Текущий in-flight message: dismiss → его onDismiss выполнится через showSnackbar
      * return в WantlyNavHost collector'е.
-     * Queued buffered messages: помечаются handled → collector пропустит их.
+     * Queued buffered messages: replayCache сбрасывается, текущий collector при
+     * следующем collect ничего не получит (буфер пуст).
      */
     fun dismissActive() {
         activeHost?.let { host ->
             host.currentSnackbarData?.dismiss()
         }
-        // Дрейним queued messages — помечаем все как handled.
-        // replay cache НЕ сбрасываем (collector проверит handled-set и пропустит).
-        // Это безопасно: после logout composition всё равно dispose'нется.
         drainQueued()
     }
 
-    /** Помечает все unhandled сообщения как handled — они не покажутся снова.
-     *  После logout данные вытираются → queued undo не имеет смысла. */
+    /**
+     * Дрейнит queued messages: сбрасывает replay cache И увеличивает [drainEpoch].
+     * Collector при следующем collect цикле видит что epoch изменился →
+     * пропускает все buffered messages (они уже не валидны после logout).
+     * НЕ очищает handled-set (handled messages остаются помеченными).
+     */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun drainQueued() {
-        handled.clear()
+        drainEpoch.incrementAndGet()
         _events.resetReplayCache()
     }
+
+    /**
+     * Monotonic counter для drain. Collector сравнивает epoch при каждом collect —
+     * если epoch изменился, buffered messages от предыдущего epoch пропускаются.
+     */
+    private val drainEpoch = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Collector вызывает чтобы узнать текущий epoch (для проверки stale buffer). */
+    fun currentEpoch(): Int = drainEpoch.get()
 
     /** Очищает replay cache (для тестов). */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
