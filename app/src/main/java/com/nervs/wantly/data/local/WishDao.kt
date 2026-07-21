@@ -124,8 +124,27 @@ interface WishDao {
         expectedStatus: String,
     )
 
-    @Query("UPDATE wishes SET pendingDelete = 1, synced = 0, syncError = 0 WHERE id = :id")
+    @Query(
+        """
+        UPDATE wishes SET
+            pendingDelete = 1,
+            preDeleteSynced = synced,
+            preDeleteSyncError = syncError,
+            undoProtected = 1,
+            synced = 0,
+            syncError = 0
+        WHERE id = :id
+        """,
+    )
     suspend fun markDeleted(id: Long)
+
+    /** Снимает undoProtected (см. WishlistDao.commitDelete). */
+    @Query("UPDATE wishes SET undoProtected = 0 WHERE id = :id")
+    suspend fun commitDelete(id: Long)
+
+    /** Снимает undoProtected со всех tombstones (см. WishlistDao.commitAllUndoProtected). */
+    @Query("UPDATE wishes SET undoProtected = 0 WHERE undoProtected = 1")
+    suspend fun commitAllUndoProtected()
 
     @Delete
     suspend fun delete(wish: WishEntity)
@@ -135,8 +154,38 @@ interface WishDao {
     @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 0")
     suspend fun getUnsynced(): List<WishEntity>
 
-    @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1")
+    @Query("SELECT * FROM wishes WHERE synced = 0 AND pendingDelete = 1 AND undoProtected = 0")
     suspend fun getPendingDelete(): List<WishEntity>
+
+    /**
+     * Reactive unsynced count для sync-индикатора в UI.
+     * Включает tombstones (pendingDelete=1) — если delete push ещё не дошёл,
+     * сервер всё ещё не знает об удалении → это несинхронизированное состояние.
+     * ownerEmail IS NOT NULL — guest-only rows не считаются (они не пойдут на сервер).
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM wishes
+        WHERE synced = 0 AND ownerEmail IS NOT NULL
+        """,
+    )
+    fun observeUnsyncedCount(): Flow<Int>
+
+    /**
+     * Снимает pendingDelete (undo удаления). Row снова visible в UI.
+     * synced и syncError восстанавливаются из снимков (см. WishlistDao.restoreDeleted).
+     */
+    @Query(
+        """
+        UPDATE wishes SET
+            pendingDelete = 0,
+            synced = preDeleteSynced,
+            syncError = preDeleteSyncError,
+            undoProtected = 0
+        WHERE id = :id
+        """,
+    )
+    suspend fun restoreDeleted(id: Long)
 
     /** Все rows с ownerEmail != null (привязаны к аккаунту). */
     @Query("SELECT * FROM wishes WHERE ownerEmail IS NOT NULL")

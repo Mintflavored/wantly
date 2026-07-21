@@ -2,12 +2,16 @@ package com.nervs.wantly.ui.screens.wishlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.material3.SnackbarDuration
+import com.nervs.wantly.R
 import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.data.model.WishStatus
 import com.nervs.wantly.data.remote.WantlyApi
 import com.nervs.wantly.data.repository.WishlistRepository
+import com.nervs.wantly.ui.SnackbarController
+import com.nervs.wantly.ui.SnackbarMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -153,13 +157,34 @@ class WishlistDetailViewModel(
         viewModelScope.launch {
             repository.updateWishlist(wishlist, title, description, coverColor)
             syncManager.pushPendingScoped()
+            SnackbarController.send(SnackbarMessage(R.string.snackbar_list_saved))
         }
     }
 
+    /**
+     * Soft-delete с undo: markDeleted → Snackbar с «Отменить».
+     * Push откладывается до закрытия Snackbar (см. HomeViewModel.deleteWishlist).
+     */
     fun deleteWish(wish: WishEntity) {
         viewModelScope.launch {
             repository.deleteWish(wish)
-            syncManager.pushPendingScoped()
+            SnackbarController.send(
+                SnackbarMessage(
+                    messageRes = R.string.snackbar_wish_deleted,
+                    actionLabelRes = R.string.snackbar_action_undo,
+                    onAction = {
+                        // restoreDeleted возвращает synced из pre-delete снимка:
+                        // dirty row (synced=0) останется dirty → планируем push.
+                        repository.restoreWish(wish.id)
+                        syncManager.pushPendingScoped()
+                    },
+                    onDismiss = {
+                        repository.commitWishDelete(wish.id)
+                        syncManager.pushPendingScoped()
+                    },
+                    duration = SnackbarDuration.Long,
+                ),
+            )
         }
     }
 }

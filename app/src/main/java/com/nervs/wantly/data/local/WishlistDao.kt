@@ -40,8 +40,35 @@ interface WishlistDao {
     @Update
     suspend fun update(wishlist: WishlistEntity)
 
-    @Query("UPDATE wishlists SET pendingDelete = 1, synced = 0, syncError = 0 WHERE id = :id")
+    @Query(
+        """
+        UPDATE wishlists SET
+            pendingDelete = 1,
+            preDeleteSynced = synced,
+            preDeleteSyncError = syncError,
+            undoProtected = 1,
+            synced = 0,
+            syncError = 0
+        WHERE id = :id
+        """,
+    )
     suspend fun markDeleted(id: Long)
+
+    /**
+     * Помечает tombstone как готовый к sync (undo-окно закрыто).
+     * Снимает undoProtected → row становится видимым для getPendingDelete.
+     */
+    @Query("UPDATE wishlists SET undoProtected = 0 WHERE id = :id")
+    suspend fun commitDelete(id: Long)
+
+    /**
+     * Снимает undoProtected со ВСЕХ tombstones. Вызывается при logout
+     * (user confirmed — undo-окно закрывается принудительно) и при startup
+     * (могли остаться undoProtected tombstones после process death, когда
+     * Snackbar onDismiss никогда не вызовется).
+     */
+    @Query("UPDATE wishlists SET undoProtected = 0 WHERE undoProtected = 1")
+    suspend fun commitAllUndoProtected()
 
     /**
      * Partial update: только редактируемые поля + synced=0 + syncError=0
@@ -72,8 +99,40 @@ interface WishlistDao {
     @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 0")
     suspend fun getUnsynced(): List<WishlistEntity>
 
-    @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1")
+    @Query("SELECT * FROM wishlists WHERE synced = 0 AND pendingDelete = 1 AND undoProtected = 0")
     suspend fun getPendingDelete(): List<WishlistEntity>
+
+    /**
+     * Reactive unsynced count для sync-индикатора в UI.
+     * Включает tombstones (pendingDelete=1) — если delete push ещё не дошёл,
+     * сервер всё ещё не знает об удалении → это несинхронизированное состояние.
+     * ownerEmail IS NOT NULL — guest-only rows не считаются (они не пойдут на сервер).
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM wishlists
+        WHERE synced = 0 AND ownerEmail IS NOT NULL
+        """,
+    )
+    fun observeUnsyncedCount(): Flow<Int>
+
+    /**
+     * Снимает pendingDelete (undo удаления). Row снова visible в UI.
+     *
+     * synced и syncError восстанавливаются из снимков (preDeleteSynced,
+     * preDeleteSyncError), сохранённых в [markDeleted]. undoProtected снимается.
+     */
+    @Query(
+        """
+        UPDATE wishlists SET
+            pendingDelete = 0,
+            synced = preDeleteSynced,
+            syncError = preDeleteSyncError,
+            undoProtected = 0
+        WHERE id = :id
+        """,
+    )
+    suspend fun restoreDeleted(id: Long)
 
     /** Все rows с ownerEmail != null (привязаны к аккаунту). */
     @Query("SELECT * FROM wishlists WHERE ownerEmail IS NOT NULL")

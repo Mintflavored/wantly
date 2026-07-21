@@ -62,6 +62,12 @@ class SyncManager(
     suspend fun syncAfterAuth(isRegistration: Boolean): Boolean {
         val result = mutex.withLock {
             try {
+                // НЕ коммитим undoProtected tombstones здесь: пользователь мог
+                // удалить item и пойти логиниться, пока undo-Snackbar ещё виден.
+                // commitAllUndoProtected сделал бы tombstone видимым для push →
+                // row физически удалился бы → undo callback вызвал restore на
+                // несуществующей записи. Snackbar onDismiss / startup / logout
+                // обрабатывают commit в безопасных точках.
                 pushPendingInternal()
                 if (!isRegistration) pullInternal()
                 // Drain cycle: ловит dirty changes сделанные во время pull
@@ -79,10 +85,21 @@ class SyncManager(
         return result
     }
 
+    /** Стартовая синхронизация с результатом (для conditional reconnect setup). */
+    suspend fun syncIfLoggedInForResult(isLoggedIn: Boolean): Boolean {
+        syncIfLoggedIn(isLoggedIn)
+        return startupSyncDone
+    }
+
     /** Стартовая синхронизация — один раз, и только при успехе. */
     suspend fun syncIfLoggedIn(isLoggedIn: Boolean) {
         if (!isLoggedIn || startupSyncDone) return
         val ok = mutex.withLock {
+            // Startup recovery: могли остаться undoProtected tombstones после
+            // process death (Snackbar onDismiss не вызовется). Коммитим их —
+            // undo-окно уже точно закрыто, tombstone должен уйти на сервер.
+            database.wishlistDao().commitAllUndoProtected()
+            database.wishDao().commitAllUndoProtected()
             // Owner guard ПЕРЕД pull: если в Room есть rows, привязанные к другому
             // аккаунту (не совпадает ownerEmail), вытираем их сразу, иначе pull
             // вставит свежие серверные данные, а старый guard после pull вытер
@@ -123,6 +140,27 @@ class SyncManager(
     }
 
     /**
+     * Синхронизация при восстановлении сети. В отличие от [syncIfLoggedIn]:
+     * - НЕ gated на [startupSyncDone] — срабатывает при каждом offline→online
+     * - НЕ делает startup recovery (commitAllUndoProtected) — активный undo
+     *   Snackbar мог быть, tombstones должны ждать своего dismiss
+     * - НЕ проверяет foreign rows owner — пользователь уже залогинен, owner-guard
+     *   отработал в startup sync
+     *
+     * Pull + push: подтягивает server-only изменения и отправляет dirty rows.
+     */
+    suspend fun syncOnReconnect(isLoggedIn: Boolean) {
+        if (!isLoggedIn) return
+        runCatching {
+            mutex.withLock {
+                pullInternal()
+                pushAndDrain()
+            }
+        }.onFailure { Log.e(TAG, "Reconnect sync не удался", it) }
+        if (pushPendingScheduled.get()) pushPending()
+    }
+
+    /**
      * Фоновая отправка dirty-записей.
      * Если mutex занят — планируем повтор после текущего sync.
      */
@@ -143,6 +181,12 @@ class SyncManager(
      */
     suspend fun pushPendingVerifiedForLogout(): LogoutSyncOutcome {
         lastSyncSaw401 = false
+        // Logout = user confirmed. Закрываем все undo-окна принудительно:
+        // tombstones становятся видимыми для getPendingDelete, иначе
+        // hasUnsyncedRows() вернул бы false и logout вытер Room при
+        // unsynced deletes (сервер хранил бы удалённые элементы).
+        database.wishlistDao().commitAllUndoProtected()
+        database.wishDao().commitAllUndoProtected()
         // Ждём mutex напрямую, а не через tryLock scheduler. Если в flight
         // есть syncAfterAuth/pushPendingScoped, дождёмся завершения, потом
         // сделаем финальный push. Иначе dirty check мог бы сработать до того,
@@ -289,6 +333,16 @@ class SyncManager(
      */
     suspend fun claimGuestRows(email: String) {
         mutex.withLock {
+            // НЕ коммитим undoProtected: между dismissActive() в AuthViewModel и
+            // этим вызовом onDismiss активного Snackbar может не успеть
+            // выполниться (async в snackbarScope). Если закоммитить здесь —
+            // активный tombstone тоже уйдёт, undo сломается.
+            //
+            // Stale guest tombstones (от убитого процесса) привяжутся к аккаунту
+            // с undoProtected=1, останутся скрытыми до следующего logged-in
+            // restart (syncIfLoggedIn recovery) или logout. Acceptable trade-off:
+            // локальные-only rows, не блокируют sync, восстанавливаются при
+            // следующем запуске.
             database.wishlistDao().claimGuestRows(email)
             database.wishDao().claimGuestRows(email)
         }

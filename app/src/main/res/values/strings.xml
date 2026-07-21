@@ -62,9 +62,9 @@
     <!-- Удаление -->
     <string name="cd_delete_wishlist">Удалить список</string>
     <string name="dialog_delete_list_title">Удалить список?</string>
-    <string name="dialog_delete_list_message">«%1$s» и все желания в нём будут удалены без возможности восстановления.</string>
+    <string name="dialog_delete_list_message">«%1$s» и все желания в нём будут удалены.</string>
     <string name="dialog_delete_wish_title">Удалить желание?</string>
-    <string name="dialog_delete_wish_message">«%1$s» будет удалено без возможности восстановления.</string>
+    <string name="dialog_delete_wish_message">«%1$s» будет удалено.</string>
     <string name="action_delete">Удалить</string>
 
     <!-- Несуществующий список -->
@@ -116,4 +116,18 @@
     <string name="shared_load_error">Не удалось загрузить список. Проверьте подключение к интернету.</string>
     <string name="action_retry">Повторить</string>
     <string name="share_token_load_error">Не удалось загрузить данные о ссылке. Проверьте подключение к интернету.</string>
+
+    <!-- Snackbar-подтверждения действий -->
+    <string name="snackbar_list_created">Список создан</string>
+    <string name="snackbar_list_deleted">Список удалён</string>
+    <string name="snackbar_list_saved">Изменения сохранены</string>
+    <string name="snackbar_wish_added">Желание добавлено</string>
+    <string name="snackbar_wish_deleted">Желание удалено</string>
+    <string name="snackbar_wish_saved">Желание обновлено</string>
+    <string name="snackbar_action_undo">Отменить</string>
+
+    <!-- Sync-индикатор -->
+    <string name="cd_sync_offline">Нет подключения к интернету</string>
+    <string name="cd_sync_unsynced">Не синхронизировано: %1$d</string>
+    <string name="cd_sync_synced">Всё синхронизировано</string>
 </resources>

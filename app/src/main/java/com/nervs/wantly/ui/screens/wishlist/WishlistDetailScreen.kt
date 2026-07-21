@@ -58,6 +58,7 @@ fun WishlistDetailScreen(
     onEditWish: (Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val app = context.applicationContext as com.nervs.wantly.WantlyApp
     val vm: WishlistDetailViewModel =
         rememberAppViewModel { WishlistDetailViewModel(wishlistId, it.repository, it.syncManager, it.api) }
     val state = vm.state.collectAsStateWithLifecycle().value
@@ -65,14 +66,13 @@ fun WishlistDetailScreen(
     val toggleErrorCount by vm.toggleErrorCount.collectAsStateWithLifecycle()
     val isLoadingToken by vm.isLoadingToken.collectAsStateWithLifecycle()
     val tokenLoadError by vm.tokenLoadError.collectAsStateWithLifecycle()
+    val isOnline by app.container.networkMonitor.isOnline.collectAsStateWithLifecycle()
+    val unsyncedCount by app.container.repository.observeUnsyncedCount()
+        .collectAsStateWithLifecycle(initialValue = 0)
     val cdBack = stringResource(R.string.cd_back)
     val cdAddWish = stringResource(R.string.cd_add_wish)
     val cdEditWishlist = stringResource(R.string.cd_edit_wishlist)
     val cdShare = stringResource(R.string.cd_share)
-    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
-    val syncErrorMessage = stringResource(R.string.sync_error_message)
-    val syncErrorEdit = stringResource(R.string.sync_error_action_edit)
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var wishToDelete by remember { mutableStateOf<WishEntity?>(null) }
     var showEditList by remember { mutableStateOf(false) }
     var showShareDialog by remember { mutableStateOf(false) }
@@ -140,7 +140,6 @@ fun WishlistDetailScreen(
             val currentWishlist = st.wishlist
             val wishes = st.wishes
             Scaffold(
-                snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
                 topBar = {
                     TopAppBar(
                         title = {
@@ -156,6 +155,13 @@ fun WishlistDetailScreen(
                             }
                         },
                         actions = {
+                            // Sync-индикатор (компактный — только когда есть проблема).
+                            if (!isOnline || unsyncedCount > 0) {
+                                com.nervs.wantly.ui.screens.home.SyncStatusIndicator(
+                                    isOnline = isOnline,
+                                    unsyncedCount = unsyncedCount,
+                                )
+                            }
                             // Share доступен только для синхронизированных списков (есть serverId).
                             // Local-only/guest списки нельзя share — toggleShare всё равно не дойдёт
                             // до сервера. Скрываем кнопку вместо показа неработающего dialog.
@@ -197,16 +203,14 @@ fun WishlistDetailScreen(
                                 onDelete = { wishToDelete = wish },
                                 onEdit = { onEditWish(wish.id) },
                                 onSyncError = {
-                                    scope.launch {
-                                        val result = snackbarHostState.showSnackbar(
-                                            message = syncErrorMessage,
-                                            actionLabel = syncErrorEdit,
+                                    com.nervs.wantly.ui.SnackbarController.send(
+                                        com.nervs.wantly.ui.SnackbarMessage(
+                                            messageRes = R.string.sync_error_message,
+                                            actionLabelRes = R.string.sync_error_action_edit,
+                                            onAction = { onEditWish(wish.id) },
                                             duration = androidx.compose.material3.SnackbarDuration.Long,
-                                        )
-                                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                                            onEditWish(wish.id)
-                                        }
-                                    }
+                                        ),
+                                    )
                                 },
                             )
                         }

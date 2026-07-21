@@ -2,6 +2,7 @@ package com.nervs.wantly.di
 
 import android.content.Context
 import com.nervs.wantly.data.GuestCounter
+import com.nervs.wantly.data.NetworkMonitor
 import com.nervs.wantly.data.SessionManager
 import com.nervs.wantly.data.SyncManager
 import com.nervs.wantly.data.local.WantlyDatabase
@@ -16,6 +17,7 @@ class AppContainer(context: Context) {
 
     val sessionManager = SessionManager(context)
     val guestCounter = GuestCounter(context)
+    val networkMonitor = NetworkMonitor(context)
     val linkPreviewService = LinkPreviewService()
     val api = WantlyApi(
         tokenProvider = { sessionManager.tokenBlocking() },

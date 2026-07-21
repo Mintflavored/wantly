@@ -94,6 +94,11 @@ fun ProfileScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
+                            // Закрываем активный undo-Snackbar: logout коммитит
+                            // tombstones в pushPendingVerifiedForLogout, но
+                            // Snackbar с Undo остаётся видимым → user может нажать
+                            // Undo на уже удалённой записи.
+                            com.nervs.wantly.ui.SnackbarController.dismissActive()
                             // Verified flush: различаем три исхода.
                             when (app.container.syncManager.pushPendingVerifiedForLogout()) {
                                 LogoutSyncOutcome.SUCCESS -> {

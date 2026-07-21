@@ -12,6 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -19,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
@@ -26,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -35,6 +40,8 @@ import androidx.navigation.navArgument
 import com.nervs.wantly.R
 import com.nervs.wantly.WantlyApp
 import com.nervs.wantly.data.GuestCounter
+import com.nervs.wantly.ui.SnackbarController
+import com.nervs.wantly.ui.SnackbarMessage
 import com.nervs.wantly.ui.screens.addwish.AddWishScreen
 import com.nervs.wantly.ui.screens.auth.AuthScreen
 import com.nervs.wantly.ui.screens.home.HomeScreen
@@ -102,7 +109,51 @@ fun WantlyNavHost() {
 
     val showBottomBar = currentRoute in TABS.map { it.route }
 
+    // Общий SnackbarHost — переживает навигацию между экранами.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+    // Привязываем host к SnackbarController — позволяет dismissActive() из logout.
+    LaunchedEffect(snackbarHostState) {
+        SnackbarController.bindHost(snackbarHostState)
+    }
+    LaunchedEffect(Unit) {
+            var inFlight: SnackbarMessage? = null
+            try {
+                SnackbarController.events.collect { msg ->
+                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом
+                    // или drain'нутые через dismissActive (logout/auth).
+                    if (SnackbarController.isHandled(msg)) return@collect
+                    inFlight = msg
+                    val result = snackbarHostState.showSnackbar(
+                        message = context.getString(msg.messageRes),
+                        actionLabel = msg.actionLabelRes?.let { context.getString(it) },
+                        duration = msg.duration,
+                    )
+                    inFlight = null
+                    // Помечаем как обработанное — Activity recreation пропустит
+                    // его при replay. НЕ сбрасываем весь cache (queued сообщения
+                    // сохраняются для нового collector'а).
+                    SnackbarController.markHandled(msg)
+                    when (result) {
+                        SnackbarResult.ActionPerformed -> msg.onAction?.let { SnackbarController.launchCallback(it) }
+                        SnackbarResult.Dismissed -> msg.onDismiss?.let { SnackbarController.launchCallback(it) }
+                    }
+                }
+        } finally {
+            // При cancellation (Activity recreation) НЕ запускаем onDismiss
+            // и НЕ помечаем handled — replay покажет Snackbar снова после
+            // recreation, user сможет нажать Undo. Раньше onDismiss коммитил
+            // tombstone преждевременно при rotation, лишая undo opportunity.
+            //
+            // Stale tombstones от process death (Snackbar onDismiss никогда
+            // не выполнится) восстанавливаются через syncIfLoggedIn recovery
+            // (commitAllUndoProtected при logged-in startup) или logout.
+            // inFlight НЕ помечаем handled — новый collector получит его из replay.
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar {

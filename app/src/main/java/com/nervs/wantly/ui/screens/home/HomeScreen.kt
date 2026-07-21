@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -34,9 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -60,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nervs.wantly.R
 import com.nervs.wantly.data.local.WishlistWithCount
-import kotlinx.coroutines.launch
 import com.nervs.wantly.data.local.entity.WishlistEntity
 import com.nervs.wantly.ui.components.SkeletonList
 import com.nervs.wantly.ui.components.WishlistFormDialog
@@ -72,17 +70,16 @@ import com.nervs.wantly.ui.theme.WishlistAccents
 @Composable
 fun HomeScreen(onWishlistClick: (Long) -> Unit) {
     val vm: HomeViewModel = rememberAppViewModel { HomeViewModel(it.repository, it.syncManager) }
+    val app = LocalContext.current.applicationContext as com.nervs.wantly.WantlyApp
     var showCreate by remember { mutableStateOf(false) }
     var wishlistToDelete by remember { mutableStateOf<WishlistEntity?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val syncErrorMessage = stringResource(R.string.sync_error_message)
-    val syncErrorEdit = stringResource(R.string.sync_error_action_edit)
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val isOnline by app.container.networkMonitor.isOnline.collectAsStateWithLifecycle()
+    val unsyncedCount by app.container.repository.observeUnsyncedCount()
+        .collectAsStateWithLifecycle(initialValue = 0)
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             LargeTopAppBar(
                 title = {
@@ -96,6 +93,9 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
+                },
+                actions = {
+                    SyncStatusIndicator(isOnline = isOnline, unsyncedCount = unsyncedCount)
                 },
                 scrollBehavior = scrollBehavior,
             )
@@ -158,16 +158,14 @@ fun HomeScreen(onWishlistClick: (Long) -> Unit) {
                                 onClick = { onWishlistClick(item.wishlist.id) },
                                 onLongClick = { wishlistToDelete = item.wishlist },
                                 onSyncError = {
-                                    scope.launch {
-                                        val result = snackbarHostState.showSnackbar(
-                                            message = syncErrorMessage,
-                                            actionLabel = syncErrorEdit,
+                                    com.nervs.wantly.ui.SnackbarController.send(
+                                        com.nervs.wantly.ui.SnackbarMessage(
+                                            messageRes = R.string.sync_error_message,
+                                            actionLabelRes = R.string.sync_error_action_edit,
+                                            onAction = { onWishlistClick(item.wishlist.id) },
                                             duration = SnackbarDuration.Long,
-                                        )
-                                        if (result == SnackbarResult.ActionPerformed) {
-                                            onWishlistClick(item.wishlist.id)
-                                        }
-                                    }
+                                        ),
+                                    )
                                 },
                             )
                         }
@@ -326,4 +324,32 @@ private fun DeleteWishlistDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
+}
+
+/**
+ * Индикатор sync-статуса в TopAppBar:
+ * - offline (CloudOff, error tint)
+ * - unsynced N (CloudQueue, outline tint)
+ * - всё синхронизировано (CloudSync, primary tint — «всё ок»)
+ */
+@Composable
+fun SyncStatusIndicator(isOnline: Boolean, unsyncedCount: Int) {
+    // Для synced-state используем отдельную строку без форматирования (P3:
+    // раньше «Не синхронизировано: 0» для чистого состояния вводило в заблуждение).
+    val description = when {
+        !isOnline -> stringResource(R.string.cd_sync_offline)
+        unsyncedCount > 0 -> stringResource(R.string.cd_sync_unsynced, unsyncedCount)
+        else -> stringResource(R.string.cd_sync_synced)
+    }
+    val tint = when {
+        !isOnline -> MaterialTheme.colorScheme.error
+        unsyncedCount > 0 -> MaterialTheme.colorScheme.outline
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val icon = when {
+        !isOnline -> Icons.Default.CloudOff
+        unsyncedCount > 0 -> Icons.Default.CloudQueue
+        else -> Icons.Default.CloudSync
+    }
+    Icon(icon, contentDescription = description, tint = tint)
 }

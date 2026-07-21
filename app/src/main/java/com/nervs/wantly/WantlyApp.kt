@@ -5,6 +5,8 @@ import com.nervs.wantly.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -17,6 +19,7 @@ class WantlyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.networkMonitor.register()
 
         // Стартовая синхронизация: если есть сохранённый токен — тянем данные
         appScope.launch {
@@ -29,7 +32,23 @@ class WantlyApp : Application() {
             }
 
             val loggedIn = container.sessionManager.isLoggedIn.first()
-            container.syncManager.syncIfLoggedIn(loggedIn)
+            val startupOk = container.syncManager.syncIfLoggedInForResult(loggedIn)
+
+            // Auto-sync когда сеть восстановилась: NetworkMonitor обновляет isOnline
+            // при переходе оффлайн→онлайн.
+            // - Если startup sync прошёл успешно — пропускаем initial emission
+            //   (drop(1)), иначе reconnect-duplicate при первом online.
+            // - Если startup sync упал (офлайн) — НЕ пропускаем initial emission,
+            //   иначе первый online после неудачного startup не триггерит sync.
+            container.networkMonitor.isOnline
+                .let { if (startupOk) it.drop(1) else it }
+                .filter { it } // только online
+                .collect {
+                    runCatching {
+                        val stillLoggedIn = container.sessionManager.isLoggedIn.first()
+                        container.syncManager.syncOnReconnect(stillLoggedIn)
+                    }
+                }
         }
     }
 }

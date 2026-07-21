@@ -2,6 +2,7 @@ package com.nervs.wantly.ui.screens.addwish
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nervs.wantly.R
 import com.nervs.wantly.data.FieldLimits
 import com.nervs.wantly.data.GuestCounter
 import com.nervs.wantly.data.SessionManager
@@ -10,6 +11,8 @@ import com.nervs.wantly.data.local.entity.WishEntity
 import com.nervs.wantly.data.model.WishDraft
 import com.nervs.wantly.data.remote.LinkPreviewError
 import com.nervs.wantly.data.repository.WishlistRepository
+import com.nervs.wantly.ui.SnackbarController
+import com.nervs.wantly.ui.SnackbarMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -182,10 +185,12 @@ class AddWishViewModel(
             val original = originalWish
             if (st.isEditMode && original != null) {
                 repository.updateWish(original, draft)
+                SnackbarController.send(SnackbarMessage(R.string.snackbar_wish_saved))
             } else {
                 repository.addWish(wishlistId, draft)
                 // Guest-счётчик инкрементируем только при создании.
                 guestCounter?.incrementWish()
+                SnackbarController.send(SnackbarMessage(R.string.snackbar_wish_added))
             }
             // Push в application scope — не отменяется при popBackStack (#45)
             syncManager?.pushPendingScoped()

@@ -812,7 +812,7 @@ class SyncManagerTest {
     // (баг #12)
     @Test
     fun `pushPending DELETE tombstone returns 404 still clears local row`() = runTest {
-        // Сначала создаём валидный wishlist, чтобы FK не нарушался
+        // Сначала создаём валидный wishlist, чтобы FK не нарушалась
         db.wishlistDao().insertWithId(
             WishlistEntity(id = 1, title = "L", serverId = 1, synced = true),
         )
