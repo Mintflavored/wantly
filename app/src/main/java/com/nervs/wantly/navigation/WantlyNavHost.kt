@@ -123,11 +123,17 @@ fun WantlyNavHost() {
             var startEpoch = SnackbarController.currentEpoch()
             try {
                 SnackbarController.events.collect { msg ->
-                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом
-                    // или от drain'нутого буфера (logout).
+                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом.
+                    if (SnackbarController.isHandled(msg)) return@collect
+                    // Drain (logout) инвалидирует buffered messages: продолжаем
+                    // пропускать ВСЕ old-epoch events БЕЗ обновления startEpoch,
+                    // иначе оставшиеся old events прошли бы как current.
+                    // onDismiss выполняем для каждого пропущенного undo-delete —
+                    // иначе tombstone остаётся undoProtected навсегда.
                     val currentEpoch = SnackbarController.currentEpoch()
-                    if (SnackbarController.isHandled(msg) || currentEpoch != startEpoch) {
-                        startEpoch = currentEpoch // синхронизируемся с новым epoch
+                    if (currentEpoch != startEpoch) {
+                        msg.onDismiss?.let { SnackbarController.launchCallback(it) }
+                        SnackbarController.markHandled(msg)
                         return@collect
                     }
                     inFlight = msg
