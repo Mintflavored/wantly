@@ -112,38 +112,24 @@ object SnackbarController {
      * tombstones, а несколько queued undo snackbars остались бы показываться
      * после удаления данных, предлагая Undo который ничего не восстанавливает.
      *
-     * Текущий in-flight message: dismiss → его onDismiss выполнится через showSnackbar
-     * return в WantlyNavHost collector'е.
-     * Queued buffered messages: replayCache сбрасывается, текущий collector при
-     * следующем collect ничего не получит (буфер пуст).
+     * Помечает все replayed messages как handled — collector пропустит их
+     * по isHandled проверке. replay cache НЕ сбрасывается (это позволило бы
+     * future events потеряться если collector подписан).
      */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun dismissActive() {
         activeHost?.let { host ->
             host.currentSnackbarData?.dismiss()
         }
-        drainQueued()
-    }
-
-    /**
-     * Дрейнит queued messages: сбрасывает replay cache И увеличивает [drainEpoch].
-     * Collector при следующем collect цикле видит что epoch изменился →
-     * пропускает все buffered messages (они уже не валидны после logout).
-     * НЕ очищает handled-set (handled messages остаются помеченными).
-     */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private fun drainQueued() {
-        drainEpoch.incrementAndGet()
+        // Помечаем все replayed messages как handled — collector пропустит их.
+        // НЕ сбрасываем replay cache целиком — это race-safe через handled-set.
+        _events.replayCache.forEach { msg ->
+            handled.add(msg)
+            // Запускаем onDismiss для каждого — tombstone коммитится.
+            msg.onDismiss?.let { callbackScope.launch { it() } }
+        }
         _events.resetReplayCache()
     }
-
-    /**
-     * Monotonic counter для drain. Collector сравнивает epoch при каждом collect —
-     * если epoch изменился, buffered messages от предыдущего epoch пропускаются.
-     */
-    private val drainEpoch = java.util.concurrent.atomic.AtomicInteger(0)
-
-    /** Collector вызывает чтобы узнать текущий epoch (для проверки stale buffer). */
-    fun currentEpoch(): Int = drainEpoch.get()
 
     /** Очищает replay cache (для тестов). */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

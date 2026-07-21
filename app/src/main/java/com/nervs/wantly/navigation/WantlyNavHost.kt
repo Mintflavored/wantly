@@ -118,24 +118,11 @@ fun WantlyNavHost() {
     }
     LaunchedEffect(Unit) {
             var inFlight: SnackbarMessage? = null
-            // Epoch при старте collect. Если drainQueued изменил epoch (logout),
-            // buffered messages от старого epoch пропускаются.
-            var startEpoch = SnackbarController.currentEpoch()
             try {
                 SnackbarController.events.collect { msg ->
-                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом.
+                    // Пропускаем сообщения, уже обработанные предыдущим collector'ом
+                    // или drain'нутые через dismissActive (logout/auth).
                     if (SnackbarController.isHandled(msg)) return@collect
-                    // Drain (logout) инвалидирует buffered messages: продолжаем
-                    // пропускать ВСЕ old-epoch events БЕЗ обновления startEpoch,
-                    // иначе оставшиеся old events прошли бы как current.
-                    // onDismiss выполняем для каждого пропущенного undo-delete —
-                    // иначе tombstone остаётся undoProtected навсегда.
-                    val currentEpoch = SnackbarController.currentEpoch()
-                    if (currentEpoch != startEpoch) {
-                        msg.onDismiss?.let { SnackbarController.launchCallback(it) }
-                        SnackbarController.markHandled(msg)
-                        return@collect
-                    }
                     inFlight = msg
                     val result = snackbarHostState.showSnackbar(
                         message = context.getString(msg.messageRes),
